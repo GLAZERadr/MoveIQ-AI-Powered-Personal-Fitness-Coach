@@ -1,0 +1,29 @@
+{
+  "name": "moveiq-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=../.env.local dist/local.js",
+    "migrate": "node --env-file-if-exists=../.env.local --import tsx migrate.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1153.0",
+    "@aws-sdk/s3-request-presigner": "^3.1153.0",
+    "@better-auth/expo": "^1.7.11",
+    "@vercel/functions": "^3.10.1",
+    "better-auth": "^1.7.11",
+    "hono": "^4.13.13",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  }
+}
