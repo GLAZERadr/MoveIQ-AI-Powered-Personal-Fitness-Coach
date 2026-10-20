@@ -4,6 +4,9 @@ import { Text } from 'react-native';
 import { useDbQuery, useMutation } from '../../data/DbProvider';
 import { fmtDistance, fmtRunPace, fmtRunPaceFromSecPerKm } from '../../data/format';
 import { deleteRun, getRun } from '../../db/repos/activities';
+import { getTrack } from '../../db/repos/gps';
+import { simplifyForMap } from '../../domain/gps';
+import { RouteMap } from '../../gps/RouteMap';
 import { getProfile } from '../../db/repos/profile';
 import { formatShortDate } from '../../domain/dates';
 import { paceSecPerKm, splitConsistency } from '../../domain/running';
@@ -16,7 +19,7 @@ export default function RunDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors, font } = useTheme();
   const mutate = useMutation();
-  const q = useDbQuery(async (db) => ({ run: await getRun(db, id), profile: await getProfile(db) }), [id]);
+  const q = useDbQuery(async (db) => ({ run: await getRun(db, id), profile: await getProfile(db), track: await getTrack(db, id) }), [id]);
   if (q.status === 'loading') return <Screen edges={[]}><Loading /></Screen>;
   if (q.status === 'error') return <Screen edges={[]}><ErrorState error={q.error} onRetry={q.reload} /></Screen>;
   const { run } = q.data;
@@ -29,8 +32,9 @@ export default function RunDetail() {
   return (
     <Screen edges={[]}>
       <Title subtitle={`${formatShortDate(run.localDate)}${run.startedAt ? ` · ${new Date(run.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''} · ${run.kind}`}>Run</Title>
+      {q.data.track.length > 1 ? <RouteMap points={simplifyForMap(q.data.track)} height={240} /> : null}
       <Row>
-        <MetricCard label="Distance" value={dist.value} unit={dist.unit} provenance="manual" />
+        <MetricCard label="Distance" value={dist.value} unit={dist.unit} provenance={q.data.track.length > 1 ? 'calculated' : 'manual'} />
         <MetricCard label="Duration" value={formatDuration(run.durationSec)} provenance="manual" />
       </Row>
       <Row>

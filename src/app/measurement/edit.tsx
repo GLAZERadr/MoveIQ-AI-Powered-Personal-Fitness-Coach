@@ -7,6 +7,7 @@ import { isLocalDate, todayLocal } from '../../domain/dates';
 import { inToCm, parseDecimal } from '../../domain/units';
 import { newId } from '../../lib/id';
 import { Button, ErrorState, Loading, Screen, Segmented, TextField, confirm } from '../../ui/components';
+import { DateField, today } from '../../ui/DateField';
 
 export default function MeasurementEdit() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -44,7 +45,7 @@ function MeasurementForm({ id, imperial, existing: m }: { id?: string; imperial:
         suffix={kind === 'waist' ? (imperial ? 'in' : 'cm') : '%'} error={errors.value}
         hint={kind === 'waist' ? 'Measure at the navel, relaxed, at the end of a normal exhale.' : undefined} />
       {kind === 'body_fat' ? <TextField label="Method" value={method} onChangeText={setMethod} placeholder="e.g. smart scale, calipers, DEXA" hint="Readings from different methods aren’t directly comparable." /> : null}
-      <TextField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" error={errors.date} />
+      <DateField label="Date" value={date} onChange={setDate} error={errors.date} maximumDate={today()} />
       <Button title="Save" onPress={save} />
       {id ? (
         <Button title="Delete" variant="danger" onPress={async () => {

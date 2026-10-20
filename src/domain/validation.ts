@@ -139,7 +139,21 @@ export interface SwimForm {
   notes: string;
 }
 
-export function parseSwimForm(f: SwimForm): FormResult<Omit<SwimActivity, 'id'>> {
+/**
+ * Pool swims: when distance is left blank but pool length and lengths are given, distance is
+ * calculated (lengths × pool length). Returns the distance string to use, or the user's own value.
+ */
+export function autoSwimDistance(f: Pick<SwimForm, 'environment' | 'distance' | 'poolLength' | 'laps'>): string | null {
+  if (f.environment !== 'pool' || f.distance.trim() !== '') return null;
+  const len = parseDecimal(f.poolLength);
+  const laps = Number(f.laps);
+  if (len == null || !(len > 0) || !Number.isInteger(laps) || laps <= 0) return null;
+  return String(Math.round(len * laps * 10) / 10);
+}
+
+export function parseSwimForm(input: SwimForm): FormResult<Omit<SwimActivity, 'id'>> {
+  const auto = autoSwimDistance(input);
+  const f: SwimForm = auto ? { ...input, distance: auto } : input;
   const schema = z.object({
     date: localDate,
     time: optionalTime,

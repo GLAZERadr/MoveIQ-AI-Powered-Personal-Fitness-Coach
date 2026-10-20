@@ -6,12 +6,13 @@ import { fmtInt, fmtWeight, fmtWeightDelta } from '../../data/format';
 import { listMeasurements, listWeights } from '../../db/repos/body';
 import { listEntries } from '../../db/repos/nutrition';
 import { getPrimaryGoal, getProfile } from '../../db/repos/profile';
-import { MEALS, dailyWeights, progressToTarget, rollingAverage, sumNutrition, weeklyAdherence, weeklyRate } from '../../domain/cutting';
+import { loadTargets } from '../../data/targets';
+import { MEALS, bmi, dailyWeights, progressToTarget, projectGoalDate, rollingAverage, sumNutrition, weeklyAdherence, weeklyRate } from '../../domain/cutting';
 import { addDays, dateRange, formatShortDate, todayLocal } from '../../domain/dates';
 import { displayWeight } from '../../domain/units';
 import { BarChart, LineChart } from '../../ui/charts';
 import {
-  Button, Card, EmptyState, ErrorState, IconButton, KeyValue, ListItem, Loading, MetricCard, Notice, ProgressBar, Row, Screen, SectionHeader, Segmented, Title,
+  Button, Card, EmptyState, ErrorState, IconButton, KeyValue, ListItem, Loading, MetricCard, Notice, ProgressBar, ProvenanceBadge, Row, Screen, SectionHeader, Segmented, Title,
 } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
 
@@ -36,17 +37,18 @@ function Overview() {
     goal: await getPrimaryGoal(db),
     weights: await listWeights(db, addDays(today, -90)),
     nutrition: await listEntries(db, addDays(today, -6), today),
+    targets: await loadTargets(db),
   }), [today]);
   if (q.status === 'loading') return <Loading />;
   if (q.status === 'error') return <ErrorState error={q.error} onRetry={q.reload} />;
-  const { profile, goal, weights, nutrition } = q.data;
+  const { profile, goal, weights, nutrition, targets } = q.data;
   const sys = profile?.unitSystem ?? 'metric';
   const daily = dailyWeights(weights);
   const rolling = rollingAverage(daily);
   const latestAvg = [...rolling].reverse().find((r) => r.averageKg != null)?.averageKg ?? null;
   const rate = weeklyRate(daily, today);
   const progress = goal?.startWeightKg && goal.targetWeightKg && latestAvg ? progressToTarget(goal.startWeightKg, latestAvg, goal.targetWeightKg) : null;
-  const adherence = weeklyAdherence(nutrition, addDays(today, -6), today, { kcal: goal?.dailyCalorieTargetKcal ?? null, proteinG: goal?.dailyProteinTargetG ?? null });
+  const adherence = weeklyAdherence(nutrition, addDays(today, -6), today, { kcal: targets.kcal, proteinG: targets.proteinG });
 
   const windowDates = dateRange(addDays(today, -29), today);
   const dailyByDate = new Map(daily.map((d) => [d.localDate, d.weightKg]));
@@ -80,6 +82,34 @@ function Overview() {
           Daily weight moves with water, glycogen, salt and food in your gut. The 7-day average shows the trend better. A change in weight is not necessarily a change in fat.
         </Text>
       </Card>
+      <Card onPress={() => router.push('/goal')} accessibilityLabel="Daily targets. Open to change.">
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={[font.bodyStrong, { color: colors.text }]}>Daily targets</Text>
+          <ProvenanceBadge kind={targets.mode === 'auto' && targets.missing.length === 0 ? 'estimate' : 'manual'} />
+        </View>
+        {targets.kcal ? (
+          <Text style={[font.metric, { color: colors.text }]}>
+            {fmtInt(targets.kcal)} <Text style={[font.body, { color: colors.textMuted }]}>kcal</Text>
+          </Text>
+        ) : null}
+        <Text style={[font.caption, { color: colors.textMuted }]}>
+          {[targets.proteinG && `${targets.proteinG} g protein`, targets.carbsG != null && `${targets.carbsG} g carbs`, targets.fatG != null && `${targets.fatG} g fat`].filter(Boolean).join(' · ') || 'No targets yet'}
+        </Text>
+        {targets.mode === 'auto' && targets.missing.length === 0 ? (
+          targets.basis.map((b) => <Text key={b} style={[font.caption, { color: colors.textMuted }]}>• {b}</Text>)
+        ) : targets.mode === 'auto' ? (
+          <Text style={[font.caption, { color: colors.warning }]}>Automatic targets need your {targets.missing.join(', ')}. Add them in Profile.</Text>
+        ) : (
+          <Text style={[font.caption, { color: colors.textMuted }]}>Manual targets. Tap to switch to automatic.</Text>
+        )}
+        {targets.mode === 'auto' && targets.missing.length === 0 ? <Text style={[font.caption, { color: colors.textMuted }]}>Updates automatically as your 7-day average weight changes.</Text> : null}
+      </Card>
+      {profile?.heightCm && latestAvg ? (
+        <Card>
+          <KeyValue label="BMI (from 7-day average)" value={bmi(latestAvg, profile.heightCm)!.toFixed(1)} provenance="calculated" />
+          <Text style={[font.caption, { color: colors.textMuted }]}>Weight ÷ height². A rough screening number; it doesn’t tell fat from muscle.</Text>
+        </Card>
+      ) : null}
       {goal?.targetWeightKg ? (
         <Card>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -88,6 +118,13 @@ function Overview() {
           </View>
           {progress != null ? <ProgressBar value={progress} label="Progress toward target weight" /> : null}
           <Text style={[font.caption, { color: colors.textMuted }]}>{progress != null ? `${Math.round(progress * 100)}% based on your 7-day average` : 'Shown once there is a 7-day average and a starting weight.'}</Text>
+          {latestAvg != null && rate.status === 'ok' ? (() => {
+            const eta = projectGoalDate(latestAvg, goal.targetWeightKg!, rate.kgPerWeek, today);
+            return (
+              <KeyValue label="At your current rate" provenance="estimate"
+                value={eta ? `reach target around ${formatShortDate(eta)}${eta.slice(0, 4) !== today.slice(0, 4) ? ` ${eta.slice(0, 4)}` : ''}` : 'not moving toward target yet'} />
+            );
+          })() : null}
         </Card>
       ) : null}
       <SectionHeader title="This week’s nutrition" action={{ label: 'Targets', onPress: () => router.push('/goal') }} />
@@ -96,14 +133,14 @@ function Overview() {
           values={adherence.days.map((d) => (d.logged ? d.kcal : null))}
           xLabels={adherence.days.map((d) => formatShortDate(d.localDate).split(' ')[1] ?? d.localDate)}
           yUnit="kcal"
-          target={goal?.dailyCalorieTargetKcal ?? null}
+          target={targets.kcal}
           emptyMessage="No food logged in the last 7 days."
-          accessibilitySummary={`Calories logged on each of the last 7 days${goal?.dailyCalorieTargetKcal ? ` against a ${goal.dailyCalorieTargetKcal} kcal target` : ''}. ${adherence.loggedDays} of 7 days logged.`}
+          accessibilitySummary={`Calories logged on each of the last 7 days${targets.kcal ? ` against a ${targets.kcal} kcal target` : ''}. ${adherence.loggedDays} of 7 days logged.`}
         />
         <KeyValue label="Days logged" value={`${adherence.loggedDays} / 7`} provenance="calculated" />
-        {goal?.dailyCalorieTargetKcal ? <KeyValue label="Days within calorie target (+5%)" value={`${adherence.days.filter((d) => d.withinCalorieTarget).length} / ${adherence.loggedDays}`} provenance="calculated" /> : null}
-        {goal?.dailyProteinTargetG ? <KeyValue label="Days meeting protein (≥90%)" value={`${adherence.days.filter((d) => d.metProteinTarget).length} / ${adherence.loggedDays}`} provenance="calculated" /> : null}
-        {!goal?.dailyCalorieTargetKcal ? <Notice>Set a calorie and protein target to see adherence.</Notice> : null}
+        {targets.kcal ? <KeyValue label="Days within calorie target (+5%)" value={`${adherence.days.filter((d) => d.withinCalorieTarget).length} / ${adherence.loggedDays}`} provenance="calculated" /> : null}
+        {targets.proteinG ? <KeyValue label="Days meeting protein (≥90%)" value={`${adherence.days.filter((d) => d.metProteinTarget).length} / ${adherence.loggedDays}`} provenance="calculated" /> : null}
+        {!targets.kcal ? <Notice>{targets.missing.length ? `Add your ${targets.missing.join(', ')} in Profile to get automatic targets.` : 'Set a calorie and protein target to see adherence.'}</Notice> : null}
         <Text style={[font.caption, { color: colors.textMuted }]}>Recorded intake only. Exercise calories are not added to your target, which avoids double-counting.</Text>
       </Card>
     </>
@@ -113,7 +150,7 @@ function Overview() {
 function NutritionLog() {
   const { colors, font } = useTheme();
   const [date, setDate] = useState(todayLocal());
-  const q = useDbQuery(async (db) => ({ entries: await listEntries(db, date, date), goal: await getPrimaryGoal(db) }), [date]);
+  const q = useDbQuery(async (db) => ({ entries: await listEntries(db, date, date), targets: await loadTargets(db) }), [date]);
   const isToday = date === todayLocal();
 
   return (
@@ -125,16 +162,16 @@ function NutritionLog() {
       </View>
       {q.status === 'loading' ? <Loading /> : q.status === 'error' ? <ErrorState error={q.error} onRetry={q.reload} /> : (() => {
         const t = sumNutrition(q.data.entries);
-        const g = q.data.goal;
+        const g = q.data.targets;
         return (
           <>
             <Card>
               <Row gap={8}>
                 {[
-                  { label: 'Calories', v: t.kcal, target: g?.dailyCalorieTargetKcal, unit: 'kcal', missing: 0 },
-                  { label: 'Protein', v: t.proteinG, target: g?.dailyProteinTargetG, unit: 'g', missing: 0 },
-                  { label: 'Carbs', v: t.carbsG, target: null, unit: 'g', missing: t.missing.carbsG },
-                  { label: 'Fat', v: t.fatG, target: null, unit: 'g', missing: t.missing.fatG },
+                  { label: 'Calories', v: t.kcal, target: g.kcal, unit: 'kcal', missing: 0 },
+                  { label: 'Protein', v: t.proteinG, target: g.proteinG, unit: 'g', missing: 0 },
+                  { label: 'Carbs', v: t.carbsG, target: g.carbsG, unit: 'g', missing: t.missing.carbsG },
+                  { label: 'Fat', v: t.fatG, target: g.fatG, unit: 'g', missing: t.missing.fatG },
                 ].map((m) => (
                   <View key={m.label} style={{ flex: 1, minWidth: 70, gap: 4 }} accessible accessibilityLabel={`${m.label} ${Math.round(m.v)} ${m.unit}${m.target ? ` of ${m.target}` : ''}`}>
                     <Text style={[font.caption, { color: colors.textMuted }]}>{m.label}</Text>

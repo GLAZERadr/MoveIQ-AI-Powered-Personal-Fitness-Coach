@@ -5,7 +5,7 @@
  * Frames are processed natively; landmarks cross to JS only because we request them (`data.mode: 'live'`).
  * Nothing is recorded or uploaded: we receive 33×4 floats per frame and drop the image.
  */
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { StyleProp, ViewStyle } from 'react-native';
 import { PoseCamera, useCameraPermission } from 'react-native-pose-detection';
 import { PoseEstimatorInfo, PoseFrame, PoseLandmark } from '../types';
@@ -41,14 +41,34 @@ export interface PoseStreamProps {
   /** Called with every detected frame AND with `landmarks: null` when no body has been seen for a while. */
   onFrame: (frame: PoseFrame) => void;
   onReady?: (info: { delegate: string; targetFps: number }) => void;
-  onFatalError?: (message: string) => void;
+  /** Called only when the detector can't start even after retrying on the CPU. */
+  onFatalError?: (error: { code: string; message: string; details: string[] }) => void;
 }
 
 /** How often we emit an explicit "no person" frame when the native side is silent. */
 const EMPTY_TICK_MS = 250;
 
-export function PoseStream({ style, active, detecting, facing, showSkeleton, onFrame, onReady, onFatalError }: PoseStreamProps) {
+export function PoseStream(props: PoseStreamProps) {
+  // If the detector fails to start with automatic GPU/CPU selection, remount once forcing the CPU
+  // (some devices' GPU drivers break MediaPipe's graph). Only then is the failure reported.
+  const [delegate, setDelegate] = useState<'auto' | 'cpu'>('auto');
+  return (
+    <PoseStreamInner
+      key={delegate}
+      {...props}
+      delegate={delegate}
+      onFatalError={(e) => {
+        if (delegate === 'auto' && e.code !== 'PERMISSION_DENIED') setDelegate('cpu');
+        else props.onFatalError?.(e);
+      }}
+    />
+  );
+}
+
+function PoseStreamInner({ style, active, detecting, facing, showSkeleton, onFrame, onReady, onFatalError, delegate }: PoseStreamProps & { delegate: 'auto' | 'cpu' }) {
   const lastFrameAt = useRef(0);
+  // Last warnings/errors from the native pipeline, attached to a fatal error for diagnosis.
+  const recentLogs = useRef<string[]>([]);
   const onFrameRef = useRef(onFrame);
   useLayoutEffect(() => {
     onFrameRef.current = onFrame;
@@ -72,6 +92,12 @@ export function PoseStream({ style, active, detecting, facing, showSkeleton, onF
       detection={detecting}
       facing={facing}
       maxPoses={1}
+      delegate={delegate}
+      logLevel="warn"
+      onLog={(entries) => {
+        for (const e of entries) recentLogs.current.push(`[${e.level}/${e.category}] ${e.message}`);
+        recentLogs.current = recentLogs.current.slice(-8);
+      }}
       overlay={showSkeleton ? { color: '#1FC96B', lineWidth: 3, pointRadius: 4, minVisibility: 0.5 } : false}
       data={{ mode: 'live', landmarks: true }}
       onPose={(f) => {
@@ -82,7 +108,7 @@ export function PoseStream({ style, active, detecting, facing, showSkeleton, onF
       }}
       onReady={(e) => onReady?.({ delegate: String(e.delegate), targetFps: e.targetFps })}
       onError={(e) => {
-        if (e.fatal) onFatalError?.(e.message);
+        if (e.fatal) onFatalError?.({ code: String(e.code), message: e.message, details: [...recentLogs.current, `delegate: ${delegate}`] });
       }}
     />
   );

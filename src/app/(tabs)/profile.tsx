@@ -4,9 +4,8 @@ import * as Sharing from 'expo-sharing';
 import React, { useState } from 'react';
 import { Switch, Text, View } from 'react-native';
 import { AccountCard } from '../../auth/AccountCard';
-import { BackupInfo, CloudError, cloud, resolveApiUrl } from '../../cloud/client';
 import { useDbQuery, useMutation } from '../../data/DbProvider';
-import { deleteAllData, exportAll, recordCounts } from '../../db/repos/dataPortability';
+import { deleteAllData, exportAll } from '../../db/repos/dataPortability';
 import { Goal, getPrimaryGoal, getProfile, saveProfile, Profile } from '../../db/repos/profile';
 import { AppSettings, getSettings, setSetting } from '../../db/repos/settings';
 import { allPoseFiles, purgeExpiredPoseRefs } from '../../db/repos/workouts';
@@ -14,7 +13,7 @@ import { ActivityLevel, Sex } from '../../domain/cutting';
 import { UnitSystem, cmToIn, inToCm, parseDecimal } from '../../domain/units';
 import { ENGINE_INFO } from '../../motion/adapters/MediaPipePoseStream';
 import { deletePoseFiles } from '../../motion/poseStorage';
-import { Button, Card, ChipSelect, ErrorState, KeyValue, ListItem, Loading, Notice, Screen, SectionHeader, Segmented, TextField, Title, confirm } from '../../ui/components';
+import { Button, Card, ChipSelect, ErrorState, ListItem, Loading, Screen, SectionHeader, Segmented, TextField, Title, confirm } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
 
 function ToggleRow({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
@@ -47,13 +46,9 @@ function ProfileForm({ data, profile }: { data: ProfileData; profile: Profile })
     ...profile,
     heightText: profile.heightCm == null ? '' : (profile.unitSystem === 'imperial' ? cmToIn(profile.heightCm) : profile.heightCm).toFixed(0),
   }));
-  const [cloudUrl, setCloudUrl] = useState<string>(data.settings.cloudApiUrl);
   const [busy, setBusy] = useState<string | null>(null);
-  const [cloudMsg, setCloudMsg] = useState<{ tone: 'info' | 'danger'; text: string } | null>(null);
-  const [backups, setBackups] = useState<BackupInfo[] | null>(null);
   const s = data.settings;
   const setS = <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => mutate((db) => setSetting(db, k, v));
-  const apiUrl = resolveApiUrl(cloudUrl);
 
   async function saveProfileDraft() {
     const h = parseDecimal(draft.heightText);
@@ -74,22 +69,10 @@ function ProfileForm({ data, profile }: { data: ProfileData; profile: Profile })
   }
 
   async function wipe() {
-    if (!(await confirm('Delete all data?', 'This permanently deletes your profile, workouts, movement data, weights, nutrition and activities from this device. Cloud backups are not affected.', 'Delete everything'))) return;
+    if (!(await confirm('Delete all data?', 'This permanently deletes your profile, workouts, movement data, weights, nutrition and activities from this device.', 'Delete everything'))) return;
     const files = await mutate((db) => deleteAllData(db));
     deletePoseFiles(files);
     router.replace('/onboarding');
-  }
-
-  async function runCloud(label: string, fn: () => Promise<string>) {
-    setBusy(label);
-    setCloudMsg(null);
-    try {
-      setCloudMsg({ tone: 'info', text: await fn() });
-    } catch (e) {
-      setCloudMsg({ tone: 'danger', text: e instanceof CloudError ? e.message : `Unexpected error: ${(e as Error).message}` });
-    } finally {
-      setBusy(null);
-    }
   }
 
   return (
@@ -116,7 +99,7 @@ function ProfileForm({ data, profile }: { data: ProfileData; profile: Profile })
         <Button title="Save profile" variant="secondary" onPress={saveProfileDraft} />
       </Card>
       <Card>
-        <ListItem icon="flag-outline" title="Goal & targets" subtitle={data.goal ? `${data.goal.kind}${data.goal.dailyCalorieTargetKcal ? ` · ${data.goal.dailyCalorieTargetKcal} kcal` : ''}${data.goal.dailyProteinTargetG ? ` · ${data.goal.dailyProteinTargetG} g protein` : ''}` : 'Not set'} onPress={() => router.push('/goal')} />
+        <ListItem icon="flag-outline" title="Goal & targets" subtitle={`${data.goal?.kind ?? 'No goal'} · targets ${data.settings.autoTargets ? 'calculated automatically' : 'set manually'}`} onPress={() => router.push('/goal')} />
       </Card>
 
       <SectionHeader title="Camera coaching" />
@@ -133,7 +116,7 @@ function ProfileForm({ data, profile }: { data: ProfileData; profile: Profile })
         <ChipSelect label="Keep movement data for post-workout analysis" value={String(s.poseRetentionDays)} onChange={(v) => setS('poseRetentionDays', Number(v))}
           options={[{ value: '0', label: 'Don’t keep' }, { value: '7', label: '7 days' }, { value: '14', label: '14 days' }, { value: '30', label: '30 days' }]} />
         <Text style={[font.caption, { color: colors.textMuted }]}>
-          Only body-landmark coordinates (12 joints, about 15 per second) are stored, never video. They stay on this device and are excluded from exports and cloud backups. Currently stored: {data.poseFiles} set(s).
+          Only body-landmark coordinates (13 body points, about 15 per second) are stored, never video. They stay on this device and are excluded from exports. Currently stored: {data.poseFiles} set(s).
         </Text>
         <Button title="Delete stored movement data now" variant="secondary" onPress={async () => {
           if (!(await confirm('Delete movement data?', 'Workout summaries are kept. Re-analysis won’t be available for past sets.'))) return;
@@ -148,40 +131,6 @@ function ProfileForm({ data, profile }: { data: ProfileData; profile: Profile })
         <Button title="Delete all data" icon="trash-outline" variant="danger" onPress={wipe} />
       </Card>
 
-      <SectionHeader title="Cloud backup (optional)" />
-      <Card>
-        <Text style={[font.caption, { color: colors.textMuted }]}>
-          Uses the MoveIQ cloud service (Neon Postgres + Object Storage). Nothing is uploaded unless you tap a button below. Movement data is never uploaded.
-        </Text>
-        <TextField label="Service URL" value={cloudUrl} onChangeText={setCloudUrl} placeholder="https://… (leave blank for the default)" hint={`Using: ${apiUrl ?? 'not configured'}`} />
-        <Button title="Save URL" variant="ghost" onPress={() => setS('cloudApiUrl', cloudUrl.trim())} />
-        <Button title="Test connection" variant="secondary" loading={busy === 'health'} onPress={() => runCloud('health', async () => {
-          const h = await cloud.health(apiUrl);
-          return `Connected. Database: ${h.postgres}. Storage: ${h.storage}.`;
-        })} />
-        <Button title="Back up now" icon="cloud-upload-outline" loading={busy === 'backup'} onPress={() => runCloud('backup', async () => {
-          const data = await mutate((db) => exportAll(db));
-          const b = await cloud.uploadBackup(apiUrl, data, recordCounts(data));
-          setBackups(null);
-          return `Backup saved (${(b.bytes / 1024).toFixed(1)} KB).`;
-        })} />
-        <Button title="Show my backups" variant="ghost" loading={busy === 'list'} onPress={() => runCloud('list', async () => {
-          const r = await cloud.listBackups(apiUrl);
-          setBackups(r.backups);
-          return `${r.backups.length} backup(s) found.`;
-        })} />
-        {cloudMsg ? <Notice tone={cloudMsg.tone}>{cloudMsg.text}</Notice> : null}
-        {backups?.map((b) => (
-          <View key={b.id} style={{ gap: 4 }}>
-            <KeyValue label={new Date(b.createdAt).toLocaleString()} value={`${(b.bytes / 1024).toFixed(1)} KB`} />
-            <Button title="Delete this backup" variant="ghost" onPress={() => runCloud('del', async () => {
-              await cloud.deleteBackup(apiUrl, b.id);
-              setBackups((xs) => xs?.filter((x) => x.id !== b.id) ?? null);
-              return 'Backup deleted.';
-            })} />
-          </View>
-        ))}
-      </Card>
       <Text style={[font.caption, { color: colors.textMuted, textAlign: 'center' }]}>MoveIQ provides fitness information, not medical advice.</Text>
     </Screen>
   );

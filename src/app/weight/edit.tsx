@@ -8,6 +8,7 @@ import { addDays, formatShortDate, isLocalDate, todayLocal } from '../../domain/
 import { UnitSystem, displayWeight, parseDecimal, weightInputToKg } from '../../domain/units';
 import { newId } from '../../lib/id';
 import { Button, Card, ErrorState, ListItem, Loading, Screen, SectionHeader, TextField, confirm } from '../../ui/components';
+import { DateField, today } from '../../ui/DateField';
 
 export default function WeightEdit() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -55,7 +56,7 @@ function WeightForm({ id, sys, entry, recent }: { id?: string; sys: UnitSystem; 
     <Screen edges={[]}>
       <TextField label={`Weight (${unit})`} value={value} onChangeText={setValue} keyboardType="decimal-pad" suffix={unit} error={errors.value} autoFocus={!id}
         hint="For the clearest trend, weigh in the morning after using the bathroom, before eating." />
-      <TextField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" error={errors.date} />
+      <DateField label="Date" value={date} onChange={setDate} error={errors.date} maximumDate={today()} />
       <TextField label="Note (optional)" value={note} onChangeText={setNote} />
       <Button title="Save" onPress={save} loading={saving} />
       {id ? (

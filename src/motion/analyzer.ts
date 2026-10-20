@@ -7,7 +7,7 @@ import { LANDMARK_INDEX, LandmarkName, PoseFrame, PoseLandmark, PoseQuality, Qua
 
 /** Landmarks retained for post-workout re-analysis (both sides; union of what the analyzers use). */
 export const RETAINED_LANDMARKS: LandmarkName[] = [
-  'leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow', 'leftWrist', 'rightWrist',
+  'nose', 'leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow', 'leftWrist', 'rightWrist',
   'leftHip', 'rightHip', 'leftKnee', 'rightKnee', 'leftAnkle', 'rightAnkle',
 ];
 
@@ -22,6 +22,9 @@ export interface AnalyzerSnapshot {
   signal: number | null;
   guidance: string | null;
   lastCue: Cue | null;
+  /** Hold exercises (plank): seconds held in position this set, and current unbroken hold. */
+  holdSec: number;
+  currentHoldSec: number;
 }
 
 export interface AnalyzerOutput {
@@ -66,6 +69,18 @@ export class ExerciseAnalyzer {
   private qualityScoreN = 0;
   private lastSnapshot: AnalyzerSnapshot;
 
+  // Hold mode state
+  holdMs = 0;
+  bestHoldMs = 0;
+  alignedMs = 0;
+  holdWindows = 0;
+  readonly holdDeviationWindows = new Map<string, number>();
+  private curHoldMs = 0;
+  private lastHoldT: number | null = null;
+  private windowStart: number | null = null;
+  private windowFrames = 0;
+  private windowCues = new Map<string, { count: number; cue: CueCandidate }>();
+
   constructor(
     readonly exercise: ExerciseDefinition,
     private readonly options: ExerciseAnalyzerOptions = {},
@@ -82,6 +97,8 @@ export class ExerciseAnalyzer {
       signal: null,
       guidance: null,
       lastCue: null,
+      holdSec: 0,
+      currentHoldSec: 0,
     };
   }
 
@@ -93,6 +110,7 @@ export class ExerciseAnalyzer {
     const quality = assessPoseQuality(frame, cfg.quality, this.side);
     this.qualityCounts[quality.level] += 1;
     if (quality.side) this.side = quality.side;
+    if (ex.mode === 'hold') return this.processHold(frame, quality);
 
     let signal: number | null = null;
     if ((quality.level === 'good' || quality.level === 'partial') && frame.landmarks && quality.side) {
@@ -152,8 +170,80 @@ export class ExerciseAnalyzer {
       signal,
       guidance: qualityGuidance(quality, cfg.quality.orientation),
       lastCue: this.lastCue,
+      holdSec: 0,
+      currentHoldSec: 0,
     };
     return { snapshot: this.lastSnapshot, newRep, newPartial, newCue };
+  }
+
+  /**
+   * Hold exercises: time accrues only between consecutive in-position frames (gaps ≤ maxGapMs).
+   * Cues are evaluated per window (default 3 s): a deviation present in ≥ half of the window's
+   * well-tracked frames becomes a candidate; the feedback engine applies persistence/rate limits.
+   */
+  private processHold(frame: PoseFrame, quality: PoseQuality): AnalyzerOutput {
+    const ex = this.exercise;
+    const cfg = ex.config;
+    const t = frame.timestampMs;
+    const maxGap = cfg.counter.maxGapMs;
+    let inPosition = false;
+    if ((quality.level === 'good' || quality.level === 'partial') && frame.landmarks && quality.side && ex.holdCheck) {
+      const r = ex.holdCheck(frame.landmarks, quality.side, cfg);
+      inPosition = r.inPosition;
+      this.qualityScoreSum += quality.score;
+      this.qualityScoreN += 1;
+      if (inPosition) {
+        if (this.lastHoldT != null && t - this.lastHoldT <= maxGap) {
+          const dt = t - this.lastHoldT;
+          this.holdMs += dt;
+          this.curHoldMs += dt;
+          if (r.aligned) this.alignedMs += dt;
+        } else this.curHoldMs = 0;
+        this.lastHoldT = t;
+        this.bestHoldMs = Math.max(this.bestHoldMs, this.curHoldMs);
+        if (quality.level === 'good') {
+          this.windowFrames += 1;
+          for (const c of r.cues) {
+            const e = this.windowCues.get(c.id) ?? { count: 0, cue: c };
+            e.count += 1;
+            this.windowCues.set(c.id, e);
+          }
+        }
+      }
+    }
+    if (!inPosition && this.lastHoldT != null && t - this.lastHoldT > maxGap) {
+      this.lastHoldT = null;
+      this.curHoldMs = 0;
+    }
+
+    let newCue: Cue | null = null;
+    this.windowStart ??= t;
+    if (t - this.windowStart >= (cfg.thresholds.cueWindowMs ?? 3000)) {
+      if (this.windowFrames > 0) {
+        this.holdWindows += 1;
+        const candidates = [...this.windowCues.values()].filter((e) => e.count >= this.windowFrames / 2).map((e) => e.cue);
+        for (const c of candidates) this.holdDeviationWindows.set(c.id, (this.holdDeviationWindows.get(c.id) ?? 0) + 1);
+        newCue = this.feedback.onRep(candidates, t, 'good');
+      }
+      this.windowStart = t;
+      this.windowFrames = 0;
+      this.windowCues.clear();
+    }
+    if (newCue) this.lastCue = newCue;
+
+    const guidance = qualityGuidance(quality, cfg.quality.orientation) ?? (inPosition ? null : ex.positionHint ?? null);
+    this.lastSnapshot = {
+      reps: Math.floor(this.holdMs / 1000),
+      partials: 0,
+      phase: inPosition ? 'ready' : 'not_ready',
+      quality,
+      signal: null,
+      guidance,
+      lastCue: this.lastCue,
+      holdSec: this.holdMs / 1000,
+      currentHoldSec: this.curHoldMs / 1000,
+    };
+    return { snapshot: this.lastSnapshot, newRep: null, newPartial: null, newCue };
   }
 
   get snapshot(): AnalyzerSnapshot {

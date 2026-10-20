@@ -6,10 +6,11 @@ import { getSwim, upsertSwim } from '../../db/repos/activities';
 import { todayLocal } from '../../domain/dates';
 import { SwimActivity, SwimStroke, checkPoolDistance, pacePer100m } from '../../domain/swimming';
 import { METERS_PER_YARD, formatDuration, formatPace } from '../../domain/units';
-import { SwimForm, parseSwimForm } from '../../domain/validation';
+import { SwimForm, autoSwimDistance, parseSwimForm } from '../../domain/validation';
 import { newId } from '../../lib/id';
 import { Button, ChipSelect, ErrorState, Loading, Notice, Screen, SectionHeader, Segmented, TextField } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
+import { DateField, TimeField, today } from '../../ui/DateField';
 
 const EMPTY: SwimForm = { date: todayLocal(), time: '', distance: '', distanceUnit: 'm', duration: '', environment: 'pool', poolLength: '25', poolLengthUnit: 'm', laps: '', stroke: null, avgHr: '', rpe: '', notes: '' };
 
@@ -74,11 +75,12 @@ function SwimEditForm({ id, swim }: { id?: string; swim: SwimActivity | null }) 
     <Screen edges={[]}>
       <Segmented value={form.environment} onChange={(environment) => set({ environment })} options={[{ value: 'pool', label: 'Pool' }, { value: 'open_water', label: 'Open water' }]} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 3 }}><TextField label="Date" value={form.date} onChangeText={(date) => set({ date })} placeholder="YYYY-MM-DD" error={errors.date} /></View>
-        <View style={{ flex: 2 }}><TextField label="Start (optional)" value={form.time} onChangeText={(time) => set({ time })} placeholder="07:15" error={errors.time} /></View>
+        <View style={{ flex: 3 }}><DateField label="Date" value={form.date} onChange={(date) => set({ date })} error={errors.date} maximumDate={today()} /></View>
+        <View style={{ flex: 2 }}><TimeField label="Start (optional)" value={form.time} onChange={(time) => set({ time })} error={errors.time} optional /></View>
       </View>
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 1 }}><TextField label="Distance" value={form.distance} onChangeText={(distance) => set({ distance })} keyboardType="decimal-pad" suffix={form.distanceUnit} error={errors.distance} /></View>
+        <View style={{ flex: 1 }}><TextField label="Distance" value={form.distance} onChangeText={(distance) => set({ distance })} keyboardType="decimal-pad" suffix={form.distanceUnit} error={errors.distance}
+          placeholder={autoSwimDistance(form) ?? undefined} hint={autoSwimDistance(form) ? `Auto: ${autoSwimDistance(form)} ${form.distanceUnit} from lengths` : pool ? 'Or leave blank and enter pool length + lengths' : undefined} /></View>
         <View style={{ flex: 1 }}><TextField label="Duration" value={form.duration} onChangeText={(duration) => set({ duration })} placeholder="38:24" keyboardType="numbers-and-punctuation" error={errors.duration} /></View>
       </View>
       <Segmented label="Distance unit" value={form.distanceUnit} onChange={(distanceUnit) => set({ distanceUnit, poolLengthUnit: distanceUnit })} options={[{ value: 'm', label: 'Meters' }, { value: 'yd', label: 'Yards' }]} />

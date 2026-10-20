@@ -4,6 +4,8 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DbProvider } from '../data/DbProvider';
+// Registers the background GPS task at startup (required for recording with the screen off).
+import '../gps/recorder';
 import { Button, Loading } from '../ui/components';
 import { useTheme } from '../ui/theme';
 
@@ -43,6 +45,7 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="welcome" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="workout/live" options={{ headerShown: false, gestureEnabled: false }} />
@@ -50,6 +53,7 @@ export default function RootLayout() {
           <Stack.Screen name="workout/[id]" options={{ title: 'Workout report' }} />
           <Stack.Screen name="run/edit" options={{ title: 'Run', presentation: 'modal' }} />
           <Stack.Screen name="run/[id]" options={{ title: 'Run' }} />
+          <Stack.Screen name="run/record" options={{ title: 'Record run' }} />
           <Stack.Screen name="swim/edit" options={{ title: 'Swim', presentation: 'modal' }} />
           <Stack.Screen name="swim/[id]" options={{ title: 'Swim' }} />
           <Stack.Screen name="weight/edit" options={{ title: 'Body weight', presentation: 'modal' }} />

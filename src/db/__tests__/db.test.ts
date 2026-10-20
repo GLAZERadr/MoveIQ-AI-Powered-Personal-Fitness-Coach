@@ -10,10 +10,11 @@ import { deleteRun, getRun, listRuns, listSwims, upsertRun, upsertSwim } from '.
 import { deleteFood, listEntries, listFoods, upsertEntry, upsertFood } from '../repos/nutrition';
 import { getPrimaryGoal, getProfile, savePrimaryGoal, saveProfile } from '../repos/profile';
 import {
-  createSession, deleteSession, ensureStarterPlans, getActiveSession, getSessionExercises, listPlans, listSessions,
+  createSession, deletePlan, deleteSession, ensureStarterPlans, getActiveSession, getSessionExercises, listPlans, listSessions,
   personalRecords, purgeExpiredPoseRefs, saveSet, setSessionStatus,
 } from '../repos/workouts';
 import { deleteAllData, exportAll } from '../repos/dataPortability';
+import { appendRecordingPoints, clearRecording, getRecordingPoints, getRecordingState, getTrack, saveTrack, setRecordingState } from '../repos/gps';
 import { getSettings, setSetting } from '../repos/settings';
 import { openTestDb } from './nodeDb';
 
@@ -31,7 +32,7 @@ describe('migrations', () => {
     const v = await db.first<{ v: number }>('SELECT MAX(version) AS v FROM schema_migrations');
     expect(v?.v).toBe(LATEST_SCHEMA_VERSION);
     const ex = await db.all<{ id: string }>('SELECT id FROM exercises WHERE camera_supported = 1 ORDER BY id');
-    expect(ex.map((e) => e.id)).toEqual(['pushup', 'squat']);
+    expect(ex.map((e) => e.id)).toEqual(['lunge', 'pike_pushup', 'plank', 'pullup', 'pushup', 'squat']);
   });
 
   it('enforces foreign keys and CHECK constraints', async () => {
@@ -167,12 +168,44 @@ describe('workout sessions', () => {
     expect(await db.all('SELECT * FROM exercise_sets')).toEqual([]);
   });
 
-  it('seeds starter plans once', async () => {
+  it('seeds starter plans once and never re-adds a plan the user deleted', async () => {
     await ensureStarterPlans(db);
     await ensureStarterPlans(db);
     const plans = await listPlans(db);
-    expect(plans).toHaveLength(1);
-    expect(plans[0]?.items.map((i) => i.exerciseId)).toEqual(['pushup', 'squat']);
+    expect(plans.map((p) => p.id).sort()).toEqual(['starter-full-body', 'starter-legs-core', 'starter-upper']);
+    expect(plans.find((p) => p.id === 'starter-legs-core')?.items.map((i) => i.exerciseId)).toEqual(['squat', 'lunge', 'plank']);
+    await deletePlan(db, 'starter-upper');
+    await ensureStarterPlans(db);
+    expect((await listPlans(db)).map((p) => p.id)).not.toContain('starter-upper');
+  });
+
+  it('upgrading an older install flags newly supported exercises and keeps user data', async () => {
+    await db.run("UPDATE exercises SET camera_supported = 0 WHERE id IN ('lunge','plank')");
+    await upsertWeight(db, { localDate: '2026-04-01', measuredAt: 't', weightKg: 80, note: null });
+    await migrate(db);
+    const flags = await db.all<{ id: string; camera_supported: number }>("SELECT id, camera_supported FROM exercises WHERE id IN ('lunge','plank')");
+    expect(flags.every((f) => f.camera_supported === 1)).toBe(true);
+    expect(await listWeights(db)).toHaveLength(1);
+  });
+});
+
+describe('gps recording persistence', () => {
+  it('buffers fixes idempotently, saves the track with the run, and cascades on delete', async () => {
+    await setRecordingState(db, { status: 'recording', startedAt: 1, segment: 0 });
+    const pts = [1000, 2000, 3000].map((t, i) => ({ t, lat: 0.0001 * i, lon: 0, alt: null, accuracy: 5 }));
+    await appendRecordingPoints(db, pts, 0);
+    await appendRecordingPoints(db, pts, 0); // re-delivered batch
+    expect(await getRecordingPoints(db)).toHaveLength(3);
+    expect((await getRecordingState(db))?.status).toBe('recording');
+    const runId = await upsertRun(db, { source: 'gps', localDate: '2026-04-26', startedAt: null, distanceM: 22, durationSec: 2, kind: 'outdoor', avgHr: null, maxHr: null, cadenceSpm: null, elevationGainM: null, rpe: null, notes: null, splits: [] });
+    await saveTrack(db, runId, await getRecordingPoints(db));
+    await clearRecording(db);
+    expect(await getRecordingPoints(db)).toHaveLength(0);
+    expect(await getRecordingState(db)).toBeNull();
+    expect(await getTrack(db, runId)).toHaveLength(3);
+    expect((await db.first<{ source: string }>('SELECT source FROM running_activities WHERE id = ?', [runId]))?.source).toBe('gps');
+    await deleteRun(db, runId);
+    expect(await getTrack(db, runId)).toHaveLength(0);
   });
 });
 

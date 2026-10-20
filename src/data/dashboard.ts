@@ -8,10 +8,11 @@ import { Db } from '../db/types';
 import { dailyWeights, rollingAverage, sumNutrition, weeklyRate } from '../domain/cutting';
 import { addDays, weekStart } from '../domain/dates';
 import { evaluateRecommendations } from '../domain/recommendations';
+import { loadTargets } from './targets';
 
 export async function loadDashboard(db: Db, today: string) {
   const since = addDays(today, -60);
-  const [profile, goal, active, weights, nutrition, runs, swims, sessions, plans, dismissed] = await Promise.all([
+  const [profile, goal, active, weights, nutrition, runs, swims, sessions, plans, dismissed, targets] = await Promise.all([
     getProfile(db),
     getPrimaryGoal(db),
     getActiveSession(db),
@@ -22,6 +23,7 @@ export async function loadDashboard(db: Db, today: string) {
     listSessions(db, { from: since }),
     listPlans(db),
     dismissedRecommendations(db, today),
+    loadTargets(db),
   ]);
 
   const daily = dailyWeights(weights);
@@ -59,7 +61,7 @@ export async function loadDashboard(db: Db, today: string) {
       ],
       dailyWeights: daily,
       nutrition,
-      goal: goal ? { kind: goal.kind, proteinTargetG: goal.dailyProteinTargetG, calorieTargetKcal: goal.dailyCalorieTargetKcal } : null,
+      goal: goal ? { kind: goal.kind, proteinTargetG: targets.proteinG, calorieTargetKcal: targets.kcal } : null,
       lastCameraSession: lastCamera,
     },
     dismissed,
@@ -69,7 +71,7 @@ export async function loadDashboard(db: Db, today: string) {
   const nextPlan = plans[0] ?? null;
 
   return {
-    profile, goal, active, latest, latestAvg, rate, rolling, daily, todayNutrition,
+    profile, goal, targets, active, latest, latestAvg, rate, rolling, daily, todayNutrition,
     weekRuns, weekSwims, weekSessions, activeDays: activeDays.size, runs, swims, sessions, nextPlan, recommendations,
   };
 }

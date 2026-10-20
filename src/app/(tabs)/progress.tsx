@@ -11,6 +11,7 @@ import { addDays, formatShortDate, todayLocal, weekStart } from '../../domain/da
 import { paceSecPerKm, paceVsHeartRate, weeklyTotals } from '../../domain/running';
 import { pacePer100m, strokeComparison } from '../../domain/swimming';
 import { displayWeight, formatDuration, formatPace, METERS_PER_MILE } from '../../domain/units';
+import { getExercise, setUnit } from '../../motion/exercises';
 import { BarChart, LineChart } from '../../ui/charts';
 import { Card, ErrorState, KeyValue, Loading, Screen, Segmented, Title } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
@@ -95,7 +96,7 @@ export default function Progress() {
               <Card>
                 <Text style={[font.bodyStrong, { color: colors.text }]}>Best set per workout (reps)</Text>
                 <LineChart
-                  series={exIds.map((id, i) => ({ label: id === 'pushup' ? 'Push-ups' : id === 'squat' ? 'Squats' : id, color: i === 0 ? colors.primary : colors.info,
+                  series={exIds.map((id, i) => ({ label: `${getExercise(id)?.name ?? id}${setUnit(id) === 's' ? ' (s)' : ''}`, color: [colors.primary, colors.info, colors.warning, colors.danger, colors.chartSecondary, colors.text][i % 6],
                     values: dates.map((dt) => d.trends.find((t) => t.localDate === dt && t.exerciseId === id)?.bestSetReps ?? null) }))}
                   xLabels={dates.map(formatShortDate)} yUnit="reps" formatY={(v) => String(Math.round(v))}
                   emptyMessage="Complete a workout to see repetition trends." accessibilitySummary="Best set repetitions per workout over time." />

@@ -11,6 +11,7 @@ import { RunForm, parseRunForm } from '../../domain/validation';
 import { newId } from '../../lib/id';
 import { Button, Card, ChipSelect, ErrorState, IconButton, Loading, Notice, Screen, SectionHeader, TextField } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
+import { DateField, TimeField, today } from '../../ui/DateField';
 
 const EMPTY: RunForm = { date: todayLocal(), time: '', distance: '', duration: '', kind: 'outdoor', avgHr: '', maxHr: '', cadence: '', elevation: '', rpe: '', notes: '', splits: [] };
 
@@ -74,8 +75,8 @@ function RunEditForm({ id, run, unit }: { id?: string; run: RunActivity | null; 
       <ChipSelect<RunKind> label="Type" value={form.kind} onChange={(kind) => set({ kind })}
         options={[{ value: 'outdoor', label: 'Outdoor' }, { value: 'treadmill', label: 'Treadmill' }, { value: 'trail', label: 'Trail' }]} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 3 }}><TextField label="Date" value={form.date} onChangeText={(date) => set({ date })} placeholder="YYYY-MM-DD" error={errors.date} /></View>
-        <View style={{ flex: 2 }}><TextField label="Start (optional)" value={form.time} onChangeText={(time) => set({ time })} placeholder="06:30" error={errors.time} /></View>
+        <View style={{ flex: 3 }}><DateField label="Date" value={form.date} onChange={(date) => set({ date })} error={errors.date} maximumDate={today()} /></View>
+        <View style={{ flex: 2 }}><TimeField label="Start (optional)" value={form.time} onChange={(time) => set({ time })} error={errors.time} optional /></View>
       </View>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <View style={{ flex: 1 }}><TextField label="Distance" value={form.distance} onChangeText={(distance) => set({ distance })} keyboardType="decimal-pad" suffix={unit} error={errors.distance} /></View>

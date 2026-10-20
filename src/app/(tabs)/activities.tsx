@@ -1,9 +1,10 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 import { useDbQuery } from '../../data/DbProvider';
 import { fmtDistance, fmtRunPace, fmtRunPaceFromSecPerKm, fmtSwimDistance, fmtSwimPace } from '../../data/format';
 import { listRuns, listSwims } from '../../db/repos/activities';
+import { getRecordingState } from '../../db/repos/gps';
 import { getProfile } from '../../db/repos/profile';
 import { addDays, formatShortDate, todayLocal, weekStart } from '../../domain/dates';
 import { runPersonalRecords, weeklyTotals } from '../../domain/running';
@@ -25,7 +26,7 @@ export default function Activities() {
     setLastParam(params.tab);
     if (params.tab === 'swim' || params.tab === 'run') setTab(params.tab);
   }
-  const q = useDbQuery(async (db) => ({ profile: await getProfile(db), runs: await listRuns(db), swims: await listSwims(db) }));
+  const q = useDbQuery(async (db) => ({ profile: await getProfile(db), runs: await listRuns(db), swims: await listSwims(db), recording: await getRecordingState(db) }));
 
   if (q.status === 'loading') return <Screen><Loading /></Screen>;
   if (q.status === 'error') return <Screen><ErrorState error={q.error} onRetry={q.reload} /></Screen>;
@@ -41,7 +42,20 @@ export default function Activities() {
     <Screen>
       <Title subtitle="Manually logged runs and swims">Activities</Title>
       <Segmented value={tab} onChange={setTab} options={[{ value: 'run', label: 'Running' }, { value: 'swim', label: 'Swimming' }]} />
-      <Button title={tab === 'run' ? 'Add run' : 'Add swim'} icon="add" onPress={() => router.push(tab === 'run' ? '/run/edit' : '/swim/edit')} />
+      {q.data.recording ? (
+        <Card onPress={() => router.push('/run/record')} style={{ borderColor: colors.primary, borderWidth: 1.5 }} accessibilityLabel="Run recording in progress. Open.">
+          <Text style={[font.bodyStrong, { color: colors.text }]}>{q.data.recording.status === 'paused' ? 'Run paused' : 'Recording a run…'}</Text>
+          <Text style={[font.caption, { color: colors.textMuted }]}>Tap to open the recorder.</Text>
+        </Card>
+      ) : null}
+      {tab === 'run' ? (
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <Button title="Record with GPS" icon="navigate" onPress={() => router.push('/run/record')} style={{ flex: 1 }} />
+          <Button title="Add manually" icon="add" variant="secondary" onPress={() => router.push('/run/edit')} style={{ flex: 1 }} />
+        </View>
+      ) : (
+        <Button title="Add swim" icon="add" onPress={() => router.push('/swim/edit')} />
+      )}
 
       {items.length === 0 ? (
         <Card>

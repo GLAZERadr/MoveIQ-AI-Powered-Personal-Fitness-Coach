@@ -5,7 +5,7 @@ import { useDbQuery, useMutation } from '../../data/DbProvider';
 import { deleteSession, getSession, getSessionExercises, updateSessionNotes } from '../../db/repos/workouts';
 import { formatShortDate } from '../../domain/dates';
 import { formatDuration } from '../../domain/units';
-import { getExercise } from '../../motion/exercises';
+import { getExercise, setUnit } from '../../motion/exercises';
 import { deletePoseFiles, readPoseSequence } from '../../motion/poseStorage';
 import { DEVIATION_LABELS, SetReport, improvementAreas, reanalyze } from '../../motion/report';
 import {
@@ -20,6 +20,26 @@ function SetReportView({ report, reanalyzed }: { report: SetReport; reanalyzed?:
   const { colors, font } = useTheme();
   const r = reanalyzed ?? report;
   const areas = improvementAreas(r);
+  if (r.hold) {
+    return (
+      <View style={{ gap: 2 }}>
+        {reanalyzed ? <Notice>Re-analysed from the stored landmark sequence (analyzer v{reanalyzed.analyzerVersion}).</Notice> : null}
+        <KeyValue label="Time in position" value={formatDuration(r.hold.totalSec)} provenance="camera" />
+        <KeyValue label="Longest unbroken hold" value={formatDuration(r.hold.bestSec)} provenance="camera" />
+        <KeyValue label="Time in good alignment" value={`${Math.round(r.hold.alignedPct)}%`} provenance="estimate" />
+        <KeyValue label="Tracking confidence" value={`${Math.round(r.tracking.meanScore * 100)}% · good in ${Math.round(r.tracking.goodFramePct)}% of frames`} />
+        {r.deviations.length > 0 ? (
+          <>
+            <Text style={[font.bodyStrong, { color: colors.text, marginTop: 8 }]}>Possible technique deviations</Text>
+            {r.deviations.map((d) => <Text key={d.id} style={[font.caption, { color: colors.textMuted }]}>• {DEVIATION_LABELS[d.id] ?? d.id}: {d.reps} of {r.hold!.windows} 3-second windows</Text>)}
+          </>
+        ) : null}
+        {areas.length > 0 ? areas.map((a) => <Text key={a} style={[font.caption, { color: colors.textMuted }]}>• {a}</Text>) : null}
+        <Text style={[font.bodyStrong, { color: colors.text, marginTop: 8 }]}>Data-quality notes</Text>
+        {r.limitations.map((l) => <Text key={l} style={[font.caption, { color: colors.textMuted }]}>• {l}</Text>)}
+      </View>
+    );
+  }
   return (
     <View style={{ gap: 2 }}>
       {reanalyzed ? <Notice>Re-analysed from the stored landmark sequence (analyzer v{reanalyzed.analyzerVersion}).</Notice> : null}
@@ -64,7 +84,7 @@ export default function WorkoutReport() {
   const { session, exercises } = q.data;
   if (!session) return <Screen edges={[]}><ErrorState error={new Error('Workout not found.')} /></Screen>;
 
-  const totalReps = exercises.reduce((a, e) => a + e.sets.reduce((b, s) => b + s.completedReps, 0), 0);
+  const totalReps = exercises.filter((e) => setUnit(e.exerciseId) === 'reps').reduce((a, e) => a + e.sets.reduce((b, s) => b + s.completedReps, 0), 0);
   const rpeValue = rpe ?? (session.rpe ? String(session.rpe) : null);
   const notesValue = notes ?? session.notes ?? '';
 
@@ -96,7 +116,7 @@ export default function WorkoutReport() {
           {e.sets.map((s) => (
             <Card key={s.id}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={[font.bodyStrong, { color: colors.text }]}>Set {s.setIndex + 1}: {s.completedReps}{s.targetReps ? ` / ${s.targetReps}` : ''} reps</Text>
+                <Text style={[font.bodyStrong, { color: colors.text }]}>Set {s.setIndex + 1}: {s.completedReps}{s.targetReps ? ` / ${s.targetReps}` : ''} {setUnit(e.exerciseId)}</Text>
                 <ProvenanceBadge kind={s.source === 'camera' ? 'camera' : 'manual'} />
               </View>
               {s.report ? <SetReportView report={s.report} reanalyzed={reanalyzed[s.id]} /> : <Text style={[font.caption, { color: colors.textMuted }]}>Logged manually, no motion analysis.</Text>}

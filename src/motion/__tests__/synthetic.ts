@@ -128,3 +128,34 @@ export function repTrajectory(opts: {
 export function toFrames(landmarks: (PoseLandmark[] | null)[], startMs = 0): PoseFrame[] {
   return landmarks.map((l, i) => ({ timestampMs: startMs + i * DT, landmarks: l }));
 }
+
+/** Lunge: front (left) knee at `frontDeg`, back (right) knee at `backDeg`; both legs visible. */
+export function lungeLandmarks(frontDeg: number, backDeg: number, trunkLeanDeg = 10): PoseLandmark[] {
+  const l = squatLandmarks(frontDeg, trunkLeanDeg, { farVisibility: 0.9, rightKneeDeg: backDeg });
+  return l;
+}
+
+/** Pull-up from the front: elbow angle `elbowDeg` (180 = dead hang); `chinOverBar` sets nose vs. wrist height. */
+export function pullupLandmarks(elbowDeg: number, chinOverBar: boolean, o: FrameOpts = {}): PoseLandmark[] {
+  const v = o.visibility ?? 0.95;
+  const l = blank(0.9);
+  const r = 0.12;
+  for (const [side, sx] of [['left', 0.42], ['right', 0.58]] as const) {
+    const dir = side === 'left' ? -1 : 1;
+    const S = { x: sx, y: 0.45 };
+    const a1 = rad(-90 + dir * 25); // upper arm up and slightly out
+    const E = { x: S.x + r * Math.cos(a1), y: S.y + r * Math.sin(a1) };
+    const back = Math.atan2(S.y - E.y, S.x - E.x);
+    const a2 = back - dir * rad(elbowDeg);
+    const W = { x: E.x + r * Math.cos(a2), y: E.y + r * Math.sin(a2) };
+    set(l, `${side}Shoulder`, S.x, S.y, v);
+    set(l, `${side}Elbow`, E.x, E.y, v);
+    set(l, `${side}Wrist`, W.x, W.y, v);
+    set(l, `${side}Hip`, sx, 0.75, v);
+    set(l, `${side}Knee`, sx, 0.88, v);
+    set(l, `${side}Ankle`, sx, 0.97, 0.4);
+  }
+  const wristY = Math.min(l[15]!.y, l[16]!.y);
+  set(l, 'nose', 0.5, elbowDeg < 110 ? (chinOverBar ? wristY - 0.03 : wristY + 0.06) : 0.36, 0.95);
+  return l;
+}

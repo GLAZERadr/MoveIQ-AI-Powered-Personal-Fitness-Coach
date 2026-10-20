@@ -8,6 +8,7 @@ import { fmtDistance, fmtInt, fmtRunPace, fmtSwimDistance, fmtSwimPace, fmtWeigh
 import { dismissRecommendation } from '../../db/repos/settings';
 import { formatShortDate, todayLocal } from '../../domain/dates';
 import { formatDuration } from '../../domain/units';
+import { describeTarget } from '../../motion/exercises';
 import { LineChart } from '../../ui/charts';
 import {
   Button, Card, EmptyState, ErrorState, ListItem, Loading, MetricCard, ProgressBar, ProvenanceBadge, Row, Screen, SectionHeader, Title,
@@ -29,8 +30,8 @@ export default function Home() {
   if (q.status === 'error') return <Screen><ErrorState error={q.error} onRetry={q.reload} /></Screen>;
   const d = q.data;
   const sys = d.profile?.unitSystem ?? 'metric';
-  const kcalTarget = d.goal?.dailyCalorieTargetKcal ?? null;
-  const proteinTarget = d.goal?.dailyProteinTargetG ?? null;
+  const kcalTarget = d.targets.kcal;
+  const proteinTarget = d.targets.proteinG;
   const w = fmtWeight(d.latestAvg?.averageKg ?? d.latest?.weightKg, sys);
   const recentRolling = d.rolling.slice(-14);
 
@@ -57,7 +58,7 @@ export default function Home() {
             <>
               <Text style={[font.title, { color: colors.text }]}>{d.nextPlan.name}</Text>
               <Text style={[font.caption, { color: colors.textMuted }]}>
-                {d.nextPlan.items.map((i) => `${i.targetSets}×${i.targetReps} ${i.exerciseId === 'pushup' ? 'push-ups' : i.exerciseId === 'squat' ? 'squats' : i.exerciseId}`).join(' · ')}
+                {d.nextPlan.items.map((i) => describeTarget(i.exerciseId, i.targetSets, i.targetReps)).join(' · ')}
               </Text>
               <Button title="Start" icon="camera-outline" onPress={() => router.push({ pathname: '/workout/setup', params: { planId: d.nextPlan!.id } })} />
             </>

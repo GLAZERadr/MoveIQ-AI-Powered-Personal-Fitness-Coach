@@ -1,6 +1,9 @@
 import { addDays, daysBetween, isLocalDate, weekStart } from '../dates';
 import {
+  bmi,
   checkCutTargets,
+  computeAutoTargets,
+  projectGoalDate,
   dailyWeights,
   estimateBmr,
   progressToTarget,
@@ -12,7 +15,7 @@ import {
 } from '../cutting';
 import { paceSecPerKm, pacePerUnit, runPersonalRecords, splitConsistency, splitTotalsMismatch, weeklyTotals, RunActivity } from '../running';
 import { checkPoolDistance, pacePer100m, swimPersonalRecords, SwimActivity } from '../swimming';
-import { parseRunForm, parseSwimForm, RunForm, SwimForm } from '../validation';
+import { autoSwimDistance, parseRunForm, parseSwimForm, RunForm, SwimForm } from '../validation';
 import { formatDuration, formatPace, fromMeters, kgToLb, lbToKg, parseDecimal, parseDuration, toMeters } from '../units';
 
 describe('units', () => {
@@ -263,5 +266,55 @@ describe('form validation', () => {
   it('rejects invalid swim distance', () => {
     expect(parseSwimForm({ ...swimForm, distance: '0' }).ok).toBe(false);
     expect(parseSwimForm({ ...swimForm, distance: 'abc' }).ok).toBe(false);
+  });
+});
+
+
+describe('automatic targets', () => {
+  const base = { goal: 'cut' as const, weightKg: 80, heightCm: 178, age: 30, sex: 'male' as const, activity: 'moderate' as const };
+  it('computes a moderate cut with protein, fat and carbs adding up', () => {
+    const r = computeAutoTargets(base);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const t = r.targets;
+    // BMR = 10*80 + 6.25*178 - 5*30 + 5 = 1767.5; TDEE = ×1.55 ≈ 2740; deficit = min(440, 685, 750) = 440
+    expect(t.maintenanceKcal).toBe(2740);
+    expect(t.kcal).toBe(2300);
+    expect(t.proteinG).toBe(160);
+    expect(t.fatG).toBe(65);
+    expect(Math.abs(t.proteinG * 4 + t.fatG * 9 + t.carbsG * 4 - t.kcal)).toBeLessThan(25);
+  });
+  it('maintenance when not cutting', () => {
+    const r = computeAutoTargets({ ...base, goal: 'strength' });
+    expect(r.ok && r.targets.kcal).toBe(2740);
+    expect(r.ok && r.targets.proteinG).toBe(130);
+  });
+  it('never goes below the safe floor', () => {
+    const r = computeAutoTargets({ ...base, weightKg: 45, heightCm: 150, age: 60, sex: 'female', activity: 'sedentary' });
+    expect(r.ok && r.targets.kcal).toBeGreaterThanOrEqual(1200);
+  });
+  it('reports what is missing instead of guessing', () => {
+    const r = computeAutoTargets({ ...base, heightCm: null, activity: null });
+    expect(r).toEqual({ ok: false, missing: ['height', 'activity level'] });
+  });
+  it('BMI and goal-date projection', () => {
+    expect(bmi(80, 178)!).toBeCloseTo(25.2, 1);
+    expect(projectGoalDate(80, 75, -0.5, '2026-01-01')).toBe('2026-03-12');
+    expect(projectGoalDate(80, 75, 0.2, '2026-01-01')).toBeNull(); // moving away from target
+    expect(projectGoalDate(80, 75, 0, '2026-01-01')).toBeNull();
+  });
+});
+
+describe('swim auto distance', () => {
+  const f = { environment: 'pool' as const, distance: '', poolLength: '25', laps: '40' };
+  it('fills distance from pool length × lengths only when blank', () => {
+    expect(autoSwimDistance(f)).toBe('1000');
+    expect(autoSwimDistance({ ...f, distance: '950' })).toBeNull();
+    expect(autoSwimDistance({ ...f, environment: 'open_water' })).toBeNull();
+    expect(autoSwimDistance({ ...f, laps: '' })).toBeNull();
+  });
+  it('parseSwimForm uses the calculated distance', () => {
+    const r = parseSwimForm({ date: '2026-04-18', time: '', distance: '', distanceUnit: 'm', duration: '20:00', environment: 'pool', poolLength: '25', poolLengthUnit: 'm', laps: '40', stroke: null, avgHr: '', rpe: '', notes: '' });
+    expect(r.ok && r.value.distanceM).toBe(1000);
   });
 });

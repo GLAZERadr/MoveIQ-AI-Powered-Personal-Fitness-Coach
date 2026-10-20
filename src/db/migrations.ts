@@ -1,4 +1,4 @@
-import { EXERCISES } from '../motion/exercises';
+import { EXERCISES, EXERCISE_META } from '../motion/exercises';
 import { Db } from './types';
 
 /**
@@ -272,6 +272,36 @@ CREATE TABLE share_links (
 );
 `,
   },
+  {
+    version: 2,
+    name: 'gps run recording',
+    sql: `
+-- Saved route of a GPS-recorded run (stays on the device; excluded from exports and cloud backups).
+CREATE TABLE run_track_points (
+  activity_id TEXT NOT NULL REFERENCES running_activities(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  t_ms INTEGER NOT NULL,
+  lat REAL NOT NULL CHECK (lat BETWEEN -90 AND 90),
+  lon REAL NOT NULL CHECK (lon BETWEEN -180 AND 180),
+  alt REAL,
+  accuracy REAL,
+  segment INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (activity_id, seq)
+);
+
+-- Fixes for the run currently being recorded. Written by the background location task, so a run
+-- survives the app being backgrounded or killed. UNIQUE t_ms makes re-delivered batches harmless.
+CREATE TABLE gps_recording_points (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  t_ms INTEGER NOT NULL UNIQUE,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  alt REAL,
+  accuracy REAL,
+  segment INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
@@ -296,16 +326,14 @@ export async function migrate(db: Db): Promise<number[]> {
 
 /** Exercise catalog rows. Idempotent (INSERT OR IGNORE / upsert of config). */
 async function seedCatalog(db: Db): Promise<void> {
-  const extra: { id: string; name: string; category: string }[] = [
-    { id: 'lunge', name: 'Lunge', category: 'legs' },
-    { id: 'plank', name: 'Plank', category: 'core' },
-    { id: 'pike_pushup', name: 'Pike push-up', category: 'push' },
-    { id: 'pullup', name: 'Pull-up', category: 'pull' },
-    { id: 'burpee', name: 'Burpee', category: 'full body' },
-  ];
+  const extra: { id: string; name: string; category: string }[] = [{ id: 'burpee', name: 'Burpee', category: 'full body' }];
   await db.transaction(async (tx) => {
     for (const ex of Object.values(EXERCISES)) {
-      await tx.run('INSERT OR IGNORE INTO exercises (id, name, category, camera_supported) VALUES (?, ?, ?, 1)', [ex.id, ex.name, ex.id === 'pushup' ? 'push' : 'legs']);
+      // Upsert so exercises that gained camera analysis in an update are flagged on existing installs.
+      await tx.run(
+        'INSERT INTO exercises (id, name, category, camera_supported) VALUES (?, ?, ?, 1) ON CONFLICT(id) DO UPDATE SET name = excluded.name, category = excluded.category, camera_supported = 1',
+        [ex.id, ex.name, EXERCISE_META[ex.id].category],
+      );
       await tx.run('INSERT OR REPLACE INTO exercise_analysis_configs (exercise_id, version, config_json) VALUES (?, ?, ?)', [ex.id, ex.config.version, JSON.stringify(ex.config)]);
     }
     for (const e of extra) {

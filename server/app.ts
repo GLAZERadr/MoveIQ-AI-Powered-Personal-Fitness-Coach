@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { auth, enabledProviders, sessionUser } from './auth.js';
 import { db } from './db.js';
+import { homePage, privacyPage, termsPage } from './pages.js';
 import { env } from './env.js';
 import { deleteObject, getObjectBytes, presignGet, putObject, storageHealth } from './storage.js';
 
@@ -52,6 +53,28 @@ app.get('/v1/auth/providers', (c) => c.json({ providers: enabledProviders(), con
 app.get('/v1/me', async (c) => {
   const user = await sessionUser(c.req.raw.headers);
   return user ? c.json({ user }) : c.json({ error: 'Not signed in.' }, 401);
+});
+
+// Public pages (Google OAuth consent screen requires home page, privacy policy and terms URLs).
+// The logo is served from server/public/logo.png by Vercel's CDN.
+app.get('/', (c) => c.html(homePage()));
+app.get('/privacy', (c) => c.html(privacyPage()));
+app.get('/terms', (c) => c.html(termsPage()));
+
+/** Permanently deletes the signed-in account and everything the account owns in the cloud. */
+app.delete('/v1/me', async (c) => {
+  const user = await sessionUser(c.req.raw.headers);
+  if (!user) return c.json({ error: 'Not signed in.' }, 401);
+  const owner = createHash('sha256').update(`user:${user.id}`).digest('hex');
+  const backups = await db().query<{ object_key: string }>('DELETE FROM backups WHERE device_key_hash = $1 RETURNING object_key', [owner]);
+  const shares = await db().query<{ image_key: string | null }>('DELETE FROM shares WHERE device_key_hash = $1 RETURNING image_key', [owner]);
+  const keys = [...backups.rows.map((r) => r.object_key), ...shares.rows.map((r) => r.image_key).filter((k): k is string => !!k)];
+  await Promise.all(keys.map((k) => deleteObject(k).catch(() => undefined)));
+  // Better Auth tables: sessions and linked provider accounts first, then the user row.
+  await db().query('DELETE FROM "session" WHERE "userId" = $1', [user.id]);
+  await db().query('DELETE FROM "account" WHERE "userId" = $1', [user.id]);
+  await db().query('DELETE FROM "user" WHERE id = $1', [user.id]);
+  return c.json({ deleted: true, backups: backups.rowCount ?? 0, shares: shares.rowCount ?? 0 });
 });
 
 app.get('/health', async (c) => {

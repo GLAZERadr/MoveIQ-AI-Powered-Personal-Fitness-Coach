@@ -28,7 +28,18 @@ function wrap(raw: SQLite.SQLiteDatabase, inTransaction = false): Db {
   return self;
 }
 
-export async function openAppDb(): Promise<Db> {
+let shared: Promise<Db> | null = null;
+
+/** The app's single database connection, shared by React screens and background tasks (GPS recording). */
+export function getAppDb(): Promise<Db> {
+  shared ??= openAppDb().catch((e) => {
+    shared = null; // allow a retry after a failed open
+    throw e;
+  });
+  return shared;
+}
+
+async function openAppDb(): Promise<Db> {
   const raw = await SQLite.openDatabaseAsync('moveiq.db');
   await raw.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   const db = wrap(raw);
@@ -61,7 +72,7 @@ export function DbProvider({ children, fallback, errorView }: { children: React.
 
   useEffect(() => {
     let cancelled = false;
-    openAppDb()
+    getAppDb()
       .then((d) => !cancelled && setDb(d))
       .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e : new Error(String(e))));
     return () => {

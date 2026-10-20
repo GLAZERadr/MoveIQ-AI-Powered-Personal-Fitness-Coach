@@ -1,4 +1,5 @@
 import { evaluateRecommendations, RecommendationInput } from '../../domain/recommendations';
+import { suggestNextTarget } from '../progression';
 import { activeDurationMs, initialSession, sessionReducer, SessionAction, SessionState } from '../sessionMachine';
 
 const plan = [
@@ -64,5 +65,20 @@ describe('recommendation rules', () => {
     const goal = { kind: 'cut', proteinTargetG: 150, calorieTargetKcal: 2200 };
     expect(evaluateRecommendations({ ...base, goal, nutrition: [n('2026-04-25', 80), n('2026-04-26', 80)] })).toEqual([]);
     expect(evaluateRecommendations({ ...base, goal, nutrition: [n('2026-04-24', 80), n('2026-04-25', 80), n('2026-04-26', 80)] }).map((r) => r.ruleId)).toEqual(['low_protein']);
+  });
+});
+
+
+describe('automatic progression', () => {
+  it('adds a rep when every set hit the target', () => {
+    expect(suggestNextTarget({ target: 10, results: [10, 11, 10] }, 10, 'reps')).toMatchObject({ target: 11 });
+    expect(suggestNextTarget({ target: 30, results: [30, 32, 35] }, 30, 'seconds')).toMatchObject({ target: 35 });
+  });
+  it('keeps the target when sets fell short', () => {
+    expect(suggestNextTarget({ target: 10, results: [10, 9, 6] }, 10, 'reps').target).toBe(10);
+    expect(suggestNextTarget({ target: 10, results: [10, 9, 9] }, 10, 'reps').target).toBe(10);
+  });
+  it('uses the default without history', () => {
+    expect(suggestNextTarget(null, 12, 'reps')).toEqual({ target: 12, reason: null });
   });
 });

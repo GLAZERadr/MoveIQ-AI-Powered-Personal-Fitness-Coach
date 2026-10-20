@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Image, Text, View } from 'react-native';
 import { useMutation } from '../data/DbProvider';
+import { useAccountName } from '../auth/social';
 import { upsertWeight } from '../db/repos/body';
 import { GoalKind, savePrimaryGoal, saveProfile } from '../db/repos/profile';
 import { ActivityLevel, Sex, checkCutTargets, estimateBmr, estimateTdee, weeksUntil } from '../domain/cutting';
@@ -9,6 +10,7 @@ import { isLocalDate, todayLocal } from '../domain/dates';
 import { UnitSystem, inToCm, parseDecimal, weightInputToKg } from '../domain/units';
 import { Button, Card, ChipSelect, Notice, ProgressBar, ProvenanceBadge, Screen, Segmented, TextField, Title } from '../ui/components';
 import { useTheme } from '../ui/theme';
+import { DateField } from '../ui/DateField';
 
 const GOALS: { value: GoalKind; label: string; icon: 'flame-outline' | 'barbell-outline' | 'pulse-outline' | 'water-outline' | 'heart-outline' }[] = [
   { value: 'cut', label: 'Get lean / cut', icon: 'flame-outline' },
@@ -18,7 +20,6 @@ const GOALS: { value: GoalKind; label: string; icon: 'flame-outline' | 'barbell-
   { value: 'general', label: 'Overall fitness', icon: 'heart-outline' },
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const LOGO = require('../../assets/logo.png');
 
 const STEPS = 5;
@@ -31,7 +32,9 @@ export default function Onboarding() {
   const [goal, setGoal] = useState<GoalKind | null>(null);
   const [experience, setExperience] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
   const [units, setUnits] = useState<UnitSystem>('metric');
-  const [name, setName] = useState('');
+  const accountName = useAccountName();
+  const [nameInput, setName] = useState<string | null>(null);
+  const name = nameInput ?? accountName ?? '';
   const [height, setHeight] = useState('');
   const [birthYear, setBirthYear] = useState('');
   const [sex, setSex] = useState<Sex | 'unspecified'>('unspecified');
@@ -192,7 +195,7 @@ export default function Onboarding() {
             <Notice>Add weight, height and birth year in the previous step to see an estimated maintenance range, or simply enter targets you already use.</Notice>
           )}
           <TextField label={`Target weight (${wUnit})`} value={targetWeight} onChangeText={setTargetWeight} keyboardType="decimal-pad" suffix={wUnit} error={errors.targetWeight} />
-          <TextField label="Target date (optional)" value={targetDate} onChangeText={setTargetDate} placeholder="YYYY-MM-DD" error={errors.targetDate} />
+          <DateField label="Target date (optional)" value={targetDate} onChange={setTargetDate} error={errors.targetDate} optional minimumDate={new Date()} />
           <TextField label="Daily calorie target" value={calories} onChangeText={setCalories} keyboardType="number-pad" suffix="kcal" error={errors.calories} />
           <TextField label="Daily protein target" value={protein} onChangeText={setProtein} keyboardType="number-pad" suffix="g" error={errors.protein}
             hint={parsed.weightKg ? `For reference, 1.6 g/kg (a common evidence-based amount during a cut) is about ${Math.round(parsed.weightKg * 1.6)} g.` : undefined} />

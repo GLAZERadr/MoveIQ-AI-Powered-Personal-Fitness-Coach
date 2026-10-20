@@ -9,8 +9,10 @@ export interface AppSettings {
   /** Show workout status on the lock screen (iOS Live Activity / Android ongoing notification). */
   lockScreenStatus: boolean;
   hapticOnRep: boolean;
-  /** Base URL of the optional MoveIQ cloud service (backup & share links). Empty = disabled. */
+  /** Base URL of the optional MoveIQ cloud service (share links). Empty = default. */
   cloudApiUrl: string;
+  /** Calorie/macro targets calculated automatically from profile + weight trend (vs. typed manually). */
+  autoTargets: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +22,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lockScreenStatus: true,
   hapticOnRep: true,
   cloudApiUrl: '',
+  autoTargets: true,
 };
 
 export async function getSettings(db: Db): Promise<AppSettings> {

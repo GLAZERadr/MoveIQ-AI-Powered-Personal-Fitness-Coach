@@ -20,6 +20,8 @@ export interface SetReport {
   deviations: { id: string; reps: number }[];
   cuesShown: { id: string; message: string; atMs: number }[];
   limitations: string[];
+  /** Hold exercises only (e.g. plank). `reps` then holds whole seconds. */
+  hold?: { totalSec: number; bestSec: number; alignedPct: number; windows: number };
 }
 
 export function buildSetReport(analyzer: ExerciseAnalyzer): SetReport {
@@ -33,6 +35,8 @@ export function buildSetReport(analyzer: ExerciseAnalyzer): SetReport {
 
   const dev = new Map<string, number>();
   for (const a of analyzer.assessments) for (const id of a.cues) dev.set(id, (dev.get(id) ?? 0) + 1);
+  // Hold mode: deviations are counted per 3-second window instead of per rep.
+  for (const [id, n] of analyzer.holdDeviationWindows) dev.set(id, n);
 
   const qc = analyzer.qualityCounts;
   const total = qc.good + qc.partial + qc.poor + qc.none;
@@ -54,7 +58,7 @@ export function buildSetReport(analyzer: ExerciseAnalyzer): SetReport {
   return {
     exerciseId: ex.id,
     analyzerVersion: ex.config.version,
-    reps: reps.length,
+    reps: ex.mode === 'hold' ? Math.floor(analyzer.holdMs / 1000) : reps.length,
     partials,
     romMeanDeg: m(roms),
     romStdDeg: s(roms),
@@ -70,6 +74,15 @@ export function buildSetReport(analyzer: ExerciseAnalyzer): SetReport {
     deviations: [...dev.entries()].map(([id, n]) => ({ id, reps: n })).sort((a, b) => b.reps - a.reps),
     cuesShown: analyzer.feedback.issued.map((c) => ({ id: c.id, message: c.message, atMs: c.atMs })),
     limitations,
+    hold:
+      ex.mode === 'hold'
+        ? {
+            totalSec: Math.floor(analyzer.holdMs / 1000),
+            bestSec: Math.floor(analyzer.bestHoldMs / 1000),
+            alignedPct: analyzer.holdMs > 0 ? (analyzer.alignedMs / analyzer.holdMs) * 100 : 0,
+            windows: analyzer.holdWindows,
+          }
+        : undefined,
   };
 }
 
@@ -81,6 +94,9 @@ export function reanalyze(exercise: ExerciseDefinition, frames: RetainedFrame[])
 }
 
 export const DEVIATION_LABELS: Record<string, string> = {
+  hips_drop: 'Hips dropping in the pike',
+  chin_below_bar: 'Chin possibly not clearing the bar',
+  partial_hang: 'Possibly not lowering fully',
   hip_sag: 'Possible hip sag',
   hip_pike: 'Hips possibly rising',
   lockout: 'Possibly incomplete lockout',
@@ -91,6 +107,10 @@ export const DEVIATION_LABELS: Record<string, string> = {
 
 /** Areas for improvement derived from deviations seen in ≥ 30% of well-tracked reps. */
 export function improvementAreas(report: SetReport): string[] {
+  if (report.hold) {
+    const w = report.hold.windows || 1;
+    return report.deviations.filter((d) => d.reps / w >= 0.3).map((d) => `${DEVIATION_LABELS[d.id] ?? d.id} for part of the hold`);
+  }
   if (report.reps === 0) return [];
   const out = report.deviations
     .filter((d) => d.reps / report.reps >= 0.3)

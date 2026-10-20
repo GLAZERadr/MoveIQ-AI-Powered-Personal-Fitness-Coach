@@ -77,3 +77,21 @@ Deep links and the secure session store need the development build (see [ANDROID
 - Production and local use different `BETTER_AUTH_SECRET` values; rotating it signs everyone out.
 - No passwords are stored (email/password sign-in is disabled).
 - Still to do before a public launch: rate limiting, and Google consent-screen verification if you publish beyond test users.
+
+## Publishing the Google consent screen (public sign-in)
+
+Public pages served by the API (source: `server/pages.ts`):
+
+| Google field | Value |
+| --- | --- |
+| Application home page | `https://moveiq-api.vercel.app` |
+| Application privacy policy link | `https://moveiq-api.vercel.app/privacy` |
+| Application terms of service link | `https://moveiq-api.vercel.app/terms` |
+| Authorized domain | `moveiq-api.vercel.app` |
+| App logo (optional, 120×120) | `assets/logo-120.png` |
+
+The contact email shown on the pages comes from the `SUPPORT_EMAIL` env var on Vercel.
+
+Domain ownership: Google Search Console → URL-prefix property `https://moveiq-api.vercel.app/` → **HTML tag** method → put the tag's `content` value in the Vercel env var `GOOGLE_SITE_VERIFICATION`, redeploy (`npm run deploy:api`), then click **Verify**.
+
+Then: Audience → **Publish app**. With only `openid email profile` scopes, no security assessment is needed. Uploading a logo or changing the name triggers brand verification (a few business days).

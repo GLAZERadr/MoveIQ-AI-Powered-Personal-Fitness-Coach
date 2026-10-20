@@ -76,7 +76,7 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
   const [manualReps, setManualReps] = useState(0);
   const [focused, setFocused] = useState(true);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<{ code: string; message: string; details: string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const analyzer = useRef<ExerciseAnalyzer | null>(null);
@@ -98,7 +98,9 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
       setAppActive(s === 'active');
-      if (s !== 'active') dispatch({ type: 'PAUSE', at: Date.now() });
+      // Only a real background (home button, screen lock) pauses. Brief system dialogs such as
+      // permission prompts report 'inactive' and must not pause the workout.
+      if (s === 'background') dispatch({ type: 'PAUSE', at: Date.now() });
     });
     return () => sub.remove();
   }, []);
@@ -245,7 +247,7 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
   const detecting = state.phase === 'active';
   const restLeft = state.phase === 'resting' && state.restEndsAtMs ? Math.max(0, Math.ceil((state.restEndsAtMs - now) / 1000)) : 0;
   const q = snapshot?.quality.level ?? 'none';
-  const message = state.phase === 'active' ? snapshot?.guidance ?? snapshot?.lastCue?.message ?? (snapshot?.phase === 'not_ready' ? 'Hold the start position to begin counting.' : null) : null;
+  const message = state.phase === 'active' ? snapshot?.guidance ?? snapshot?.lastCue?.message ?? (snapshot?.phase === 'not_ready' ? (exDef.mode === 'hold' ? exDef.positionHint ?? null : 'Hold the start position to begin counting.') : null) : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -257,7 +259,7 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
           facing={settings.cameraFacing}
           showSkeleton={settings.showSkeleton}
           onFrame={onFrame}
-          onFatalError={(m) => setCameraError(m)}
+          onFatalError={setCameraError}
         />
       ) : null}
       <SafeAreaView style={{ flex: 1, justifyContent: 'space-between' }} edges={['top', 'bottom']}>
@@ -267,7 +269,7 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
           <View style={{ flex: 1 }}>
             <Text style={[font.bodyStrong, { color: '#fff' }]}>{exDef.name}</Text>
             <Text style={[font.caption, { color: '#ddd' }]}>
-              Set {state.setIndex + 1}/{current.targetSets} · target {current.targetReps} reps · {formatDuration(activeDurationMs(state, now) / 1000)}
+              Set {state.setIndex + 1}/{current.targetSets} · target {current.targetReps} {exDef.unit === 'seconds' ? 's' : 'reps'} · {formatDuration(activeDurationMs(state, now) / 1000)}
             </Text>
           </View>
           {useCamera ? (
@@ -280,7 +282,10 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
 
         {cameraError ? (
           <View style={[styles.panel, { margin: 16 }]}>
-            <Text style={[font.body, { color: '#fff' }]}>Camera tracking stopped: {cameraError}. You can continue by logging reps manually.</Text>
+            <Text style={[font.body, { color: '#fff' }]}>Camera tracking couldn’t start on this phone, even after retrying on the CPU. You can keep going by logging reps manually.</Text>
+            <Text selectable style={[font.caption, { color: '#bbb', marginTop: 6 }]}>
+              {`${cameraError.code}: ${cameraError.message}\n${cameraError.details.join('\n')}`}
+            </Text>
           </View>
         ) : null}
 
@@ -307,10 +312,13 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
           ) : useCamera ? (
             <View accessibilityLiveRegion="polite" accessibilityLabel={`${reps} reps`} style={{ alignItems: 'center' }}>
               <View style={{ width: 150, height: 150, borderRadius: 75, borderWidth: 6, borderColor: reps >= current.targetReps ? colors.primary : 'rgba(255,255,255,0.4)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-                <Text style={[font.hero, { color: '#fff', fontSize: 64, lineHeight: 70 }]}>{reps}</Text>
-                <Text style={[font.caption, { color: '#ddd' }]}>of {current.targetReps} reps</Text>
+                <Text style={[font.hero, { color: '#fff', fontSize: 64, lineHeight: 70 }]}>{exDef.mode === 'hold' ? formatDuration(snapshot?.holdSec ?? 0) : reps}</Text>
+                <Text style={[font.caption, { color: '#ddd' }]}>{exDef.mode === 'hold' ? `of ${formatDuration(current.targetReps)} held` : `of ${current.targetReps} reps`}</Text>
               </View>
-              {snapshot && snapshot.partials > 0 ? <Text style={[font.caption, { color: '#ddd', marginTop: 6 }]}>{snapshot.partials} not counted</Text> : null}
+              {exDef.mode === 'hold' && snapshot && snapshot.currentHoldSec > 0 ? (
+                <Text style={[font.caption, { color: '#ddd', marginTop: 6 }]}>Current hold {formatDuration(snapshot.currentHoldSec)}</Text>
+              ) : null}
+              {exDef.mode !== 'hold' && snapshot && snapshot.partials > 0 ? <Text style={[font.caption, { color: '#ddd', marginTop: 6 }]}>{snapshot.partials} not counted</Text> : null}
             </View>
           ) : (
             <View style={[styles.panel, { alignItems: 'center', padding: 20, gap: 12 }]}>
@@ -333,7 +341,7 @@ function LiveSession({ sessionId, manual, exercises, settings }: Loaded & { sess
             </View>
           ) : null}
           {state.phase === 'active' && reps >= current.targetReps ? (
-            <Text style={[font.caption, { color: '#fff', textAlign: 'center' }]}>Target reached. Tap Done, or keep going.</Text>
+            <Text style={[font.caption, { color: '#fff', textAlign: 'center' }]}>{exDef.mode === 'hold' ? 'Target time reached. Tap Done, or keep holding.' : 'Target reached. Tap Done, or keep going.'}</Text>
           ) : null}
           <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
             {state.phase === 'active' || state.phase === 'resting' ? (

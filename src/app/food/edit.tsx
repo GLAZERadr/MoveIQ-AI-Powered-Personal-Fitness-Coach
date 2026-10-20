@@ -7,8 +7,10 @@ import { Meal, scaleNutrition } from '../../domain/cutting';
 import { isLocalDate, todayLocal } from '../../domain/dates';
 import { parseDecimal } from '../../domain/units';
 import { newId } from '../../lib/id';
-import { Button, Card, ChipSelect, ErrorState, ListItem, Loading, Notice, Screen, SectionHeader, TextField, confirm } from '../../ui/components';
+import { DatabaseFoodForm, isDatabaseEntry } from '../../nutrition/DatabaseFoodForm';
+import { Button, Card, ChipSelect, ErrorState, ListItem, Loading, Notice, Screen, SectionHeader, Segmented, TextField, confirm } from '../../ui/components';
 import { useTheme } from '../../ui/theme';
+import { DateField, today } from '../../ui/DateField';
 
 interface FoodFields {
   name: string; servingQty: string; servingUnit: string; kcal: string; protein: string; carbs: string; fat: string; fiber: string; sodium: string;
@@ -21,15 +23,38 @@ export default function FoodEdit() {
   const q = useDbQuery(async (db) => (params.id ? await getEntry(db, params.id) : null), [params.id]);
   if (q.status === 'loading') return <Screen edges={[]}><Loading /></Screen>;
   if (q.status === 'error') return <Screen edges={[]}><ErrorState error={q.error} onRetry={q.reload} /></Screen>;
-  return <FoodForm id={params.id} entry={q.data} defaultMeal={params.meal} defaultDate={params.date} />;
+  if (q.data && isDatabaseEntry(q.data)) {
+    return <Screen edges={[]}><DatabaseFoodForm entry={q.data} /></Screen>;
+  }
+  if (q.data) return <FoodForm id={params.id} entry={q.data} defaultMeal={params.meal} defaultDate={params.date} />;
+  return <NewFood meal={params.meal} date={params.date} />;
 }
+
+/** New entry: search the food database (default) or type values manually. */
+function NewFood({ meal, date }: { meal?: Meal; date?: string }) {
+  const [mode, setMode] = useState<'search' | 'manual'>('search');
+  if (mode === 'manual') {
+    return <FoodForm entry={null} defaultMeal={meal} defaultDate={date} header={<Segmented value={mode} onChange={setMode} options={MODES} />} />;
+  }
+  return (
+    <Screen edges={[]}>
+      <Segmented value={mode} onChange={setMode} options={MODES} />
+      <DatabaseFoodForm entry={null} defaultMeal={meal} defaultDate={date} />
+    </Screen>
+  );
+}
+
+const MODES: { value: 'search' | 'manual'; label: string }[] = [
+  { value: 'search', label: 'Search foods' },
+  { value: 'manual', label: 'Enter manually' },
+];
 
 function fieldsFromEntry(e: NutritionEntry): FoodFields {
   const per = (v: number | null) => (v == null ? null : v / e.servings);
   return { name: e.name, servingQty: str(e.servingQty ?? 1), servingUnit: e.servingUnit ?? 'serving', kcal: str(per(e.kcal)), protein: str(per(e.proteinG)), carbs: str(per(e.carbsG)), fat: str(per(e.fatG)), fiber: str(per(e.fiberG)), sodium: str(per(e.sodiumMg)) };
 }
 
-function FoodForm({ id, entry, defaultMeal, defaultDate }: { id?: string; entry: NutritionEntry | null; defaultMeal?: Meal; defaultDate?: string }) {
+function FoodForm({ id, entry, defaultMeal, defaultDate, header }: { id?: string; entry: NutritionEntry | null; defaultMeal?: Meal; defaultDate?: string; header?: React.ReactNode }) {
   const { colors, font } = useTheme();
   const mutate = useMutation();
   const [search, setSearch] = useState('');
@@ -90,6 +115,7 @@ function FoodForm({ id, entry, defaultMeal, defaultDate }: { id?: string; entry:
 
   return (
     <Screen edges={[]}>
+      {header}
       {!id ? (
         <>
           <TextField label="Search my foods" value={search} onChangeText={setSearch} placeholder="Oats, chicken…" />
@@ -124,7 +150,7 @@ function FoodForm({ id, entry, defaultMeal, defaultDate }: { id?: string; entry:
       <TextField label="Number of servings" value={servings} onChangeText={setServings} keyboardType="decimal-pad" error={errors.servings} />
       <ChipSelect<Meal> label="Meal" value={meal} onChange={setMeal}
         options={[{ value: 'breakfast', label: 'Breakfast' }, { value: 'lunch', label: 'Lunch' }, { value: 'dinner', label: 'Dinner' }, { value: 'snack', label: 'Snack' }]} />
-      <TextField label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" error={errors.date} />
+      <DateField label="Date" value={date} onChange={setDate} error={errors.date} maximumDate={today()} />
       {!foodItemId ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={[font.body, { color: colors.text }]}>Save to my foods for reuse</Text>

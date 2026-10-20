@@ -7,13 +7,19 @@ import { Goal, GoalKind, Profile, getPrimaryGoal, getProfile, savePrimaryGoal } 
 import { checkCutTargets, dailyWeights, estimateBmr, estimateTdee, weeksUntil } from '../domain/cutting';
 import { isLocalDate, todayLocal } from '../domain/dates';
 import { displayWeight, parseDecimal, weightInputToKg } from '../domain/units';
-import { Button, Card, ChipSelect, ErrorState, Loading, Notice, ProvenanceBadge, Screen, TextField } from '../ui/components';
+import { Button, Card, ChipSelect, ErrorState, Loading, Notice, ProvenanceBadge, Screen, Segmented, TextField } from '../ui/components';
+import { EffectiveTargets, loadTargets } from '../data/targets';
+import { getSettings, setSetting } from '../db/repos/settings';
 import { useTheme } from '../ui/theme';
+import { DateField } from '../ui/DateField';
 
-type GoalData = { goal: Goal | null; profile: Profile | null; weights: WeightEntryWithNote[] };
+type GoalData = { goal: Goal | null; profile: Profile | null; weights: WeightEntryWithNote[]; autoTargets: boolean; targets: EffectiveTargets };
 
 export default function GoalScreen() {
-  const q = useDbQuery(async (db): Promise<GoalData> => ({ goal: await getPrimaryGoal(db), profile: await getProfile(db), weights: await listWeights(db) }));
+  const q = useDbQuery(async (db): Promise<GoalData> => ({
+    goal: await getPrimaryGoal(db), profile: await getProfile(db), weights: await listWeights(db),
+    autoTargets: (await getSettings(db)).autoTargets, targets: await loadTargets(db),
+  }));
   if (q.status === 'loading') return <Screen edges={[]}><Loading /></Screen>;
   if (q.status === 'error') return <Screen edges={[]}><ErrorState error={q.error} onRetry={q.reload} /></Screen>;
   return <GoalForm data={q.data} />;
@@ -29,6 +35,7 @@ function GoalForm({ data }: { data: GoalData }) {
     return { kind: g?.kind ?? ('cut' as GoalKind), start: w(g?.startWeightKg ?? dailyWeights(data.weights).at(-1)?.weightKg), target: w(g?.targetWeightKg), date: g?.targetDate ?? '', kcal: g?.dailyCalorieTargetKcal?.toString() ?? '', protein: g?.dailyProteinTargetG?.toString() ?? '' };
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [auto, setAuto] = useState(data.autoTargets);
 
   const unit = sys === 'imperial' ? 'lb' : 'kg';
   const p = data.profile;
@@ -41,7 +48,7 @@ function GoalForm({ data }: { data: GoalData }) {
   const bmr = latest && p?.heightCm && age ? estimateBmr({ weightKg: latest, heightCm: p.heightCm, age, sex: p.sex }) : null;
   const tdee = bmr && p?.activityLevel ? estimateTdee(bmr, p.activityLevel) : null;
   const warnings = checkCutTargets({
-    calorieTargetKcal: parseDecimal(f.kcal), bmrLow: bmr?.low ?? null, currentKg: latest ?? toKg(f.start), targetKg: toKg(f.target),
+    calorieTargetKcal: auto ? null : parseDecimal(f.kcal), bmrLow: bmr?.low ?? null, currentKg: latest ?? toKg(f.start), targetKg: toKg(f.target),
     heightCm: p?.heightCm ?? null, weeksToGoal: isLocalDate(f.date) ? weeksUntil(todayLocal(), f.date) : null,
   });
 
@@ -57,6 +64,7 @@ function GoalForm({ data }: { data: GoalData }) {
     if (f.date && !isLocalDate(f.date)) e.date = 'Use the format YYYY-MM-DD.';
     setErrors(e);
     if (Object.keys(e).length) return;
+    await mutate((db) => setSetting(db, 'autoTargets', auto));
     await mutate((db) => savePrimaryGoal(db, {
       id: data.goal?.kind === f.kind ? data.goal.id : undefined,
       kind: f.kind, startWeightKg: toKg(f.start), targetWeightKg: toKg(f.target), targetDate: f.date || null,
@@ -73,12 +81,32 @@ function GoalForm({ data }: { data: GoalData }) {
         <View style={{ flex: 1 }}><TextField label="Starting weight" value={f.start} onChangeText={(start) => setF({ ...f, start })} keyboardType="decimal-pad" suffix={unit} error={errors.start} /></View>
         <View style={{ flex: 1 }}><TextField label="Target weight" value={f.target} onChangeText={(target) => setF({ ...f, target })} keyboardType="decimal-pad" suffix={unit} error={errors.target} /></View>
       </View>
-      <TextField label="Target date (optional)" value={f.date} onChangeText={(date) => setF({ ...f, date })} placeholder="YYYY-MM-DD" error={errors.date} />
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 1 }}><TextField label="Daily calories" value={f.kcal} onChangeText={(kcal) => setF({ ...f, kcal })} keyboardType="number-pad" suffix="kcal" error={errors.kcal} /></View>
-        <View style={{ flex: 1 }}><TextField label="Daily protein" value={f.protein} onChangeText={(protein) => setF({ ...f, protein })} keyboardType="number-pad" suffix="g" error={errors.protein} /></View>
-      </View>
-      {tdee ? (
+      <DateField label="Target date (optional)" value={f.date} onChange={(date) => setF({ ...f, date })} error={errors.date} optional minimumDate={new Date()} />
+      <Segmented<'auto' | 'manual'> label="Daily calorie & macro targets" value={auto ? 'auto' : 'manual'} onChange={(v) => setAuto(v === 'auto')}
+        options={[{ value: 'auto', label: 'Automatic' }, { value: 'manual', label: 'Manual' }]} />
+      {auto ? (
+        <Card>
+          {data.targets.mode === 'auto' && data.targets.missing.length === 0 ? (
+            <>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={[font.bodyStrong, { color: colors.text }]}>{data.targets.kcal} kcal · {data.targets.proteinG} g protein</Text>
+                <ProvenanceBadge kind="estimate" />
+              </View>
+              <Text style={[font.caption, { color: colors.textMuted }]}>{data.targets.carbsG} g carbs · {data.targets.fatG} g fat</Text>
+              {data.targets.basis.map((b) => <Text key={b} style={[font.caption, { color: colors.textMuted }]}>• {b}</Text>)}
+              <Text style={[font.caption, { color: colors.textMuted }]}>Recalculated automatically from your goal, profile and 7-day average weight. Changes to the goal above apply after saving.</Text>
+            </>
+          ) : (
+            <Notice tone="warning">{`Automatic targets need your ${data.targets.missing.join(', ') || 'profile'}. Add them in Profile (and log a weigh-in), or switch to Manual.`}</Notice>
+          )}
+        </Card>
+      ) : (
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1 }}><TextField label="Daily calories" value={f.kcal} onChangeText={(kcal) => setF({ ...f, kcal })} keyboardType="number-pad" suffix="kcal" error={errors.kcal} /></View>
+          <View style={{ flex: 1 }}><TextField label="Daily protein" value={f.protein} onChangeText={(protein) => setF({ ...f, protein })} keyboardType="number-pad" suffix="g" error={errors.protein} /></View>
+        </View>
+      )}
+      {tdee && !auto ? (
         <Card>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={[font.caption, { color: colors.textMuted }]}>Estimated maintenance</Text>

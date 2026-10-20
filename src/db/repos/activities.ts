@@ -64,7 +64,7 @@ function mapRun(r: RunRow, splits: RunSplit[]): RunActivity {
 }
 
 /** Saves a run and replaces its splits atomically. Upsert by id makes retries safe. */
-export async function upsertRun(db: Db, a: Omit<RunActivity, 'id'> & { id?: string }): Promise<string> {
+export async function upsertRun(db: Db, a: Omit<RunActivity, 'id'> & { id?: string; source?: 'manual' | 'gps' }): Promise<string> {
   const id = a.id ?? newId();
   const now = nowIso();
   await db.transaction(async (tx) => {
@@ -76,6 +76,7 @@ export async function upsertRun(db: Db, a: Omit<RunActivity, 'id'> & { id?: stri
          cadence_spm = excluded.cadence_spm, elevation_gain_m = excluded.elevation_gain_m, rpe = excluded.rpe, notes = excluded.notes, updated_at = excluded.updated_at`,
       [id, a.localDate, a.startedAt, a.distanceM, Math.round(a.durationSec), a.kind, a.avgHr, a.maxHr, a.cadenceSpm, a.elevationGainM, a.rpe, a.notes, now, now],
     );
+    if (a.source) await tx.run('UPDATE running_activities SET source = ? WHERE id = ?', [a.source, id]);
     await tx.run('DELETE FROM running_splits WHERE activity_id = ?', [id]);
     for (const [i, s] of a.splits.entries()) {
       await tx.run('INSERT INTO running_splits (activity_id, split_index, distance_m, duration_sec) VALUES (?, ?, ?, ?)', [id, i, s.distanceM, Math.round(s.durationSec)]);

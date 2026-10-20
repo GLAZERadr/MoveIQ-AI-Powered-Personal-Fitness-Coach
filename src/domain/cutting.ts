@@ -293,3 +293,89 @@ export function checkCutTargets(input: {
 export function weeksUntil(from: LocalDate, to: LocalDate): number {
   return daysBetween(from, to) / 7;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Automatic daily targets (estimates; always overridable by the user)
+// ---------------------------------------------------------------------------------------------
+
+export interface AutoTargets {
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  maintenanceKcal: number;
+  basis: string[];
+}
+
+export type AutoTargetsResult = { ok: true; targets: AutoTargets } | { ok: false; missing: string[] };
+
+/**
+ * Daily targets from profile + current weight:
+ *  - maintenance = Mifflin-St Jeor × activity factor (midpoint of the range if sex isn't given);
+ *  - cut: deficit ≈ 0.5% of body weight per week (7,700 kcal/kg), capped at 25% of maintenance and
+ *    750 kcal/day, never below 1,200 kcal or the estimated resting energy;
+ *  - protein 2.0 g/kg while cutting, otherwise 1.6 g/kg; fat 0.8 g/kg; carbs fill the remainder.
+ */
+export function computeAutoTargets(input: {
+  goal: 'cut' | 'strength' | 'endurance' | 'swim' | 'general';
+  weightKg: number | null;
+  heightCm: number | null;
+  age: number | null;
+  sex: Sex | null;
+  activity: ActivityLevel | null;
+}): AutoTargetsResult {
+  const missing: string[] = [];
+  if (!input.weightKg) missing.push('body weight');
+  if (!input.heightCm) missing.push('height');
+  if (!input.age) missing.push('birth year');
+  if (!input.activity) missing.push('activity level');
+  if (missing.length) return { ok: false, missing };
+  const w = input.weightKg!;
+  const bmr = estimateBmr({ weightKg: w, heightCm: input.heightCm!, age: input.age!, sex: input.sex })!;
+  const bmrMid = (bmr.low + bmr.high) / 2;
+  const tdee = estimateTdee({ low: bmrMid, high: bmrMid }, input.activity!).low;
+  const basis = [
+    `Maintenance ≈ ${Math.round(tdee)} kcal (Mifflin-St Jeor × ${ACTIVITY_FACTORS[input.activity!]} activity${input.sex ? '' : ', sex not given so the middle of the range'})`,
+  ];
+  let kcal = tdee;
+  const cutting = input.goal === 'cut';
+  if (cutting) {
+    const wanted = (0.005 * w * 7700) / 7;
+    const deficit = Math.min(wanted, tdee * 0.25, 750);
+    const floor = Math.max(1200, bmrMid);
+    kcal = Math.max(floor, tdee - deficit);
+    basis.push(`Deficit ${Math.round(tdee - kcal)} kcal/day ≈ ${(((tdee - kcal) * 7) / 7700).toFixed(2)} kg/week (aiming ~0.5% of body weight)`);
+    if (kcal === floor) basis.push('Held at the safe minimum (1,200 kcal or your resting needs)');
+  } else {
+    basis.push('Maintenance calories (goal is not cutting)');
+  }
+  const proteinPerKg = cutting ? 2.0 : 1.6;
+  const proteinG = proteinPerKg * w;
+  const fatG = 0.8 * w;
+  const carbsG = Math.max(0, (kcal - proteinG * 4 - fatG * 9) / 4);
+  basis.push(`Protein ${proteinPerKg} g/kg · fat 0.8 g/kg · carbs fill the rest`);
+  const r5 = (v: number) => Math.round(v / 5) * 5;
+  return {
+    ok: true,
+    targets: { kcal: Math.round(kcal / 10) * 10, proteinG: r5(proteinG), fatG: r5(fatG), carbsG: r5(carbsG), maintenanceKcal: Math.round(tdee), basis },
+  };
+}
+
+/** Body-mass index (kg/m²). A population screening number; it doesn't distinguish fat from muscle. */
+export function bmi(weightKg: number, heightCm: number): number | null {
+  if (!(weightKg > 0 && heightCm > 0)) return null;
+  return weightKg / (heightCm / 100) ** 2;
+}
+
+/**
+ * When the target weight would be reached at the current weekly rate. Only when the trend is
+ * moving toward the target; otherwise null (we don't project a date we can't support).
+ */
+export function projectGoalDate(currentKg: number, targetKg: number, kgPerWeek: number, from: LocalDate): LocalDate | null {
+  const remaining = targetKg - currentKg;
+  if (Math.abs(remaining) < 0.1) return from;
+  if (kgPerWeek === 0 || Math.sign(remaining) !== Math.sign(kgPerWeek)) return null;
+  const weeks = remaining / kgPerWeek;
+  if (weeks > 104) return null;
+  return addDays(from, Math.ceil(weeks * 7));
+}

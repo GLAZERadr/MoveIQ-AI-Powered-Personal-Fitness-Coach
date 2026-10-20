@@ -14,10 +14,10 @@ import { getSession, getSessionExercises } from '../db/repos/workouts';
 import { Db } from '../db/types';
 import { formatShortDate } from '../domain/dates';
 import { formatDuration } from '../domain/units';
+import { setUnit } from '../motion/exercises';
 import { nowIso } from '../lib/id';
 import { Button, ErrorState, Loading, Notice, Screen } from '../ui/components';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const LOGO = require('../../assets/logo.png');
 
 type ShareType = 'run' | 'swim' | 'workout';
@@ -60,12 +60,12 @@ async function load(db: Db, type: ShareType, id: string): Promise<{ card: CardDa
     const s = await getSession(db, id);
     if (!s) throw new Error('Workout not found.');
     const ex = await getSessionExercises(db, id);
-    const total = ex.reduce((a, e) => a + e.sets.reduce((b, x) => b + x.completedReps, 0), 0);
+    const total = ex.filter((e) => setUnit(e.exerciseId) === 'reps').reduce((a, e) => a + e.sets.reduce((b, x) => b + x.completedReps, 0), 0);
     card = {
       kind: 'workout', title: 'Bodyweight workout', date: s.localDate,
       hero: { value: String(total), unit: 'reps' },
       stats: [
-        ...ex.filter((e) => e.sets.length).map((e) => ({ label: e.exerciseName, value: e.sets.map((x) => x.completedReps).join(' · ') })),
+        ...ex.filter((e) => e.sets.length).map((e) => ({ label: e.exerciseName, value: e.sets.map((x) => x.completedReps).join(' · ') + (setUnit(e.exerciseId) === 's' ? ' s' : '') })),
         { label: 'Time', value: formatDuration(s.activeDurationSec) },
       ],
       bars: ex.flatMap((e) => e.sets.map((x) => x.completedReps)),

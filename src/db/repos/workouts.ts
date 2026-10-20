@@ -315,11 +315,8 @@ export async function deletePlan(db: Db, id: string): Promise<void> {
   await db.run('DELETE FROM workout_plans WHERE id = ?', [id]);
 }
 
-/** Seeds starter templates once (only when no plans exist). */
-export async function ensureStarterPlans(db: Db): Promise<void> {
-  const n = await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM workout_plans');
-  if ((n?.n ?? 0) > 0) return;
-  await savePlan(db, {
+const STARTER_PLANS: Plan[] = [
+  {
     id: 'starter-full-body',
     name: 'Bodyweight basics',
     notes: 'Push-ups and squats, 3 sets each.',
@@ -327,7 +324,39 @@ export async function ensureStarterPlans(db: Db): Promise<void> {
       { exerciseId: 'pushup', substitutionExerciseId: null, targetSets: 3, targetReps: 10, restSec: 90 },
       { exerciseId: 'squat', substitutionExerciseId: null, targetSets: 3, targetReps: 15, restSec: 90 },
     ],
-  });
+  },
+  {
+    id: 'starter-upper',
+    name: 'Upper body',
+    notes: 'Push-ups, pike push-ups and pull-ups (needs a bar).',
+    items: [
+      { exerciseId: 'pushup', substitutionExerciseId: null, targetSets: 3, targetReps: 10, restSec: 90 },
+      { exerciseId: 'pike_pushup', substitutionExerciseId: 'pushup', targetSets: 3, targetReps: 8, restSec: 90 },
+      { exerciseId: 'pullup', substitutionExerciseId: null, targetSets: 3, targetReps: 5, restSec: 120 },
+    ],
+  },
+  {
+    id: 'starter-legs-core',
+    name: 'Legs & core',
+    notes: 'Squats, lunges and a plank hold (seconds).',
+    items: [
+      { exerciseId: 'squat', substitutionExerciseId: null, targetSets: 3, targetReps: 15, restSec: 90 },
+      { exerciseId: 'lunge', substitutionExerciseId: 'squat', targetSets: 3, targetReps: 12, restSec: 90 },
+      { exerciseId: 'plank', substitutionExerciseId: null, targetSets: 3, targetReps: 30, restSec: 60 },
+    ],
+  },
+];
+
+/** Adds any starter template the user doesn't have yet (never overwrites or re-adds edited ones). */
+export async function ensureStarterPlans(db: Db): Promise<void> {
+  const seeded = new Set((await db.all<{ key: string }>("SELECT key FROM app_settings WHERE key LIKE 'starterPlan:%'")).map((r) => r.key));
+  const existing = new Set((await db.all<{ id: string }>('SELECT id FROM workout_plans')).map((r) => r.id));
+  for (const p of STARTER_PLANS) {
+    const key = `starterPlan:${p.id}`;
+    if (seeded.has(key)) continue;
+    if (!existing.has(p.id)) await savePlan(db, p);
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, 'true')", [key]);
+  }
 }
 
 /** Removes expired pose sequences from the DB and returns the files the caller must delete. */
@@ -339,4 +368,21 @@ export async function purgeExpiredPoseRefs(db: Db, nowIsoStr: string): Promise<s
 
 export async function allPoseFiles(db: Db): Promise<string[]> {
   return (await db.all<{ file_uri: string }>('SELECT file_uri FROM pose_sequence_refs')).map((r) => r.file_uri);
+}
+
+/** Sets from the most recent completed session that included this exercise (for auto-progression). */
+export async function lastPerformance(db: Db, exerciseId: string): Promise<{ target: number | null; results: number[] } | null> {
+  const last = await db.first<{ id: string }>(
+    `SELECT we.id FROM workout_exercises we JOIN workout_sessions ws ON ws.id = we.session_id
+     WHERE we.exercise_id = ? AND ws.status = 'completed'
+       AND EXISTS (SELECT 1 FROM exercise_sets s WHERE s.workout_exercise_id = we.id)
+     ORDER BY ws.started_at DESC LIMIT 1`,
+    [exerciseId],
+  );
+  if (!last) return null;
+  const sets = await db.all<{ target_reps: number | null; completed_reps: number }>(
+    'SELECT target_reps, completed_reps FROM exercise_sets WHERE workout_exercise_id = ? ORDER BY set_index',
+    [last.id],
+  );
+  return { target: sets[0]?.target_reps ?? null, results: sets.map((s) => s.completed_reps) };
 }
