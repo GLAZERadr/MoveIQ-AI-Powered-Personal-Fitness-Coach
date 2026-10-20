@@ -4,13 +4,14 @@
  * standard tile.openstreetmap.org endpoint, normal client-side caching.
  * Without internet (tiles/Leaflet can't load), falls back to drawing the route alone.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleProp, Text, View, ViewStyle } from 'react-native';
-import Svg, { Circle, Polyline } from 'react-native-svg';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '../ui/theme';
+import { LatLon, RouteLine } from './RouteLine';
 
-export type LatLon = [number, number];
+export type { LatLon };
+
 
 type WebViewHandle = { injectJavaScript: (script: string) => void };
 // The library's types omit `ref`, though the component forwards it to the native view at runtime.
@@ -51,32 +52,12 @@ function html(points: LatLon[], follow: boolean, dark: boolean): string {
 </script></body></html>`;
 }
 
-/** Equirectangular projection of the route into the box; good enough for a city-sized run. */
 function RouteSketch({ points, height }: { points: LatLon[]; height: number }) {
   const { colors } = useTheme();
   const [w, setW] = useState(0);
-  const proj = useMemo(() => {
-    if (points.length < 2 || w === 0) return null;
-    const lat0 = points[0]![0];
-    const k = Math.cos((lat0 * Math.PI) / 180);
-    const xs = points.map((p) => p[1] * k);
-    const ys = points.map((p) => -p[0]);
-    const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-    const pad = 16;
-    const s = Math.min((w - 2 * pad) / Math.max(maxX - minX, 1e-9), (height - 2 * pad) / Math.max(maxY - minY, 1e-9));
-    const ox = (w - (maxX - minX) * s) / 2;
-    const oy = (height - (maxY - minY) * s) / 2;
-    return xs.map((x, i) => [ox + (x - minX) * s, oy + (ys[i]! - minY) * s] as const);
-  }, [points, w, height]);
   return (
     <View style={{ height }} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      {proj ? (
-        <Svg width={w} height={height}>
-          <Polyline points={proj.map((p) => p.join(',')).join(' ')} stroke={colors.primary} strokeWidth={4} fill="none" strokeLinejoin="round" strokeLinecap="round" />
-          <Circle cx={proj[0]![0]} cy={proj[0]![1]} r={5} fill={colors.primary} />
-          <Circle cx={proj[proj.length - 1]![0]} cy={proj[proj.length - 1]![1]} r={6} fill={colors.danger} />
-        </Svg>
-      ) : null}
+      <RouteLine points={points} width={w} height={height} color={colors.primary} startColor={colors.primary} endColor={colors.danger} />
     </View>
   );
 }

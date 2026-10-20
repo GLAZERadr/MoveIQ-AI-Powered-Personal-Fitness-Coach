@@ -88,3 +88,9 @@
 - **Food database:** USDA FoodData Central SR Legacy (7,793 foods, public domain) converted by `scripts/build-food-db.py` into a bundled offline JSON; 75 Indonesian/English aliases mapped to exact USDA records (test-verified); prefix search; nutrition = per-100 g × grams or USDA standard portions. 6 tests.
 - **Automatic calculations:** daily kcal/protein/fat/carb targets (Mifflin-St Jeor × activity; cut ≈0.5% BW/week, capped, floored), updating with the 7-day average (toggle Automatic/Manual); BMI; projected goal date (only when trending toward target); swim distance from lengths × pool length; workout auto-progression (+1 rep / +5 s when all sets hit target). 10 new tests.
 - Checks: 112/112 tests, typecheck/lint clean, Android bundle 6.5 MB. EAS build 1768bd87 (v1.2.0, versionCode 3).
+
+## 2026-10-21: v1.3.0: share formats
+- Share card in three formats (`src/share/ShareCard.tsx`): Post 4:5 (1080×1350), Story 9:16 (1080×1920), transparent Sticker (white text with halo). GPS runs show the route line (`src/gps/RouteLine.tsx`, shared with the offline map fallback; projection test added).
+- Fixed: split bars used pace (slowest km tallest); they now use speed (fastest km tallest).
+- "Save to photos" via expo-media-library: on Android 10+ MediaStore insert needs no permission, so all photo/storage READ permissions are removed (verified in the generated manifest). Public links always upload the opaque Post card.
+- v1.2.0 build finished (training fix etc.). EAS build c3382d47 = v1.3.0, versionCode 4. 113/113 tests.

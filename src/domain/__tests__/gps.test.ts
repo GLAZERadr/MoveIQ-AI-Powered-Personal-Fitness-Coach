@@ -1,3 +1,4 @@
+import { projectRoute } from '../../gps/RouteLine';
 import { GpsPoint, cleanTrack, currentPaceSecPerKm, haversine, trackStats } from '../gps';
 
 // Straight line northward: 1 degree latitude ≈ 111,195 m, so 0.0001° ≈ 11.12 m.
@@ -68,5 +69,22 @@ describe('gps track processing', () => {
     const slow = line({ meters: 600, speedMps: 2.5 });
     const fast = line({ meters: 400, speedMps: 4, startT: slow[slow.length - 1]!.t + 1250 }).map((p) => ({ ...p, lat: p.lat + 605 / M_PER_DEG }));
     expect(currentPaceSecPerKm([...slow, ...fast])!).toBeCloseTo(250, -1);
+  });
+});
+
+
+describe('route projection for share cards', () => {
+  it('fits the route inside the box with padding and keeps aspect', () => {
+    const pts: [number, number][] = [[0, 0], [0.001, 0], [0.001, 0.002]];
+    const p = projectRoute(pts, 200, 100, 10)!;
+    for (const [x, y] of p) {
+      expect(x).toBeGreaterThanOrEqual(10 - 1e-9);
+      expect(x).toBeLessThanOrEqual(190 + 1e-9);
+      expect(y).toBeGreaterThanOrEqual(10 - 1e-9);
+      expect(y).toBeLessThanOrEqual(90 + 1e-9);
+    }
+    // North is up: the first (southern) point is lower on screen than the second.
+    expect(p[0]![1]).toBeGreaterThan(p[1]![1]);
+    expect(projectRoute([[0, 0]], 200, 100)).toBeNull();
   });
 });
